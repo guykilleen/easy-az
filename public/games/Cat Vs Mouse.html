@@ -1,0 +1,2197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cat Vs Mouse – by Lil</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #000;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      font-family: 'Courier New', monospace;
+    }
+    canvas { display: block; border: 2px solid #333; }
+    #overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.88);
+      display: flex; flex-direction: column;
+      justify-content: center; align-items: center;
+      color: #fff; z-index: 10;
+    }
+    #overlay h1 {
+      font-size: 2.4rem; color: #f0c040;
+      text-shadow: 0 0 16px #f0c04088;
+      margin-bottom: 0.4rem; letter-spacing: 2px;
+    }
+    #overlay .subtitle { font-size: 1rem; color: #aaa; margin-bottom: 0.5rem; }
+    #overlay .byline   { font-size: 0.8rem; color: #666; margin-bottom: 2rem; }
+    #overlay .instructions {
+      font-size: 0.9rem; color: #ccc; text-align: center;
+      line-height: 2; margin-bottom: 2.5rem;
+      background: #ffffff0d; padding: 1rem 2rem; border-radius: 6px;
+    }
+    #overlay .instructions b { color: #f0c040; }
+    #startBtn {
+      background: #f0c040; color: #000; border: none;
+      padding: 0.8rem 2.5rem; font-size: 1.2rem;
+      font-family: 'Courier New', monospace; font-weight: bold;
+      cursor: pointer; letter-spacing: 2px; border-radius: 4px;
+      transition: transform 0.1s, box-shadow 0.1s;
+      box-shadow: 0 0 20px #f0c04066;
+    }
+    #startBtn:hover { transform: scale(1.05); box-shadow: 0 0 30px #f0c040aa; }
+    #overlay.hidden { display: none; }
+  </style>
+</head>
+<body>
+
+<div id="overlay">
+  <h1>🐱 CAT VS MOUSE 🐱</h1>
+  <div class="subtitle">A Rope Puzzle — 8 Levels</div>
+  <div class="byline">by Lil — on EZ-AZ.net</div>
+  <div class="instructions">
+    🎮 <b>Arrow Keys / WASD</b> to move your cat<br>
+    🐾 Walk <b>close to a peg</b> to hook the rope onto it<br>
+    🪢 Connect <b>all pegs in order → back to peg 1</b> to close the loop<br>
+    🐭 Make sure the <b>mouse is inside</b> the loop when the net falls!<br>
+    ⚡ Collect <b>power-ups</b> for speed, freeze &amp; bigger net<br>
+    🕳️ Watch out — <b>mouse holes</b> appear from level 2!
+  </div>
+  <button id="startBtn">▶ START GAME</button>
+</div>
+
+<canvas id="gameCanvas" width="700" height="800"></canvas>
+
+<script>
+// ── roundRect polyfill for older browsers ──────────────────────────
+if (!CanvasRenderingContext2D.prototype.roundRect) {
+  CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
+    r = Math.min(r, w/2, h/2);
+    this.beginPath();
+    this.moveTo(x + r, y);
+    this.lineTo(x + w - r, y);
+    this.quadraticCurveTo(x + w, y, x + w, y + r);
+    this.lineTo(x + w, y + h - r);
+    this.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    this.lineTo(x + r, y + h);
+    this.quadraticCurveTo(x, y + h, x, y + h - r);
+    this.lineTo(x, y + r);
+    this.quadraticCurveTo(x, y, x + r, y);
+    this.closePath();
+    return this;
+  };
+}
+
+const canvas = document.getElementById('gameCanvas');
+const ctx    = canvas.getContext('2d');
+const overlay  = document.getElementById('overlay');
+const startBtn = document.getElementById('startBtn');
+
+// ── Input ──────────────────────────────────────────────────────────────
+const keys = {};
+window.addEventListener('keydown', e => { keys[e.key] = true;  e.preventDefault(); });
+window.addEventListener('keyup',   e => { keys[e.key] = false; });
+
+// ── Audio Engine (Web Audio API) ──────────────────────────────────────
+const AC = new (window.AudioContext || window.webkitAudioContext)();
+
+// Master gain — lets us mute everything easily
+const masterGain = AC.createGain();
+masterGain.gain.value = 0.55;
+masterGain.connect(AC.destination);
+
+function resumeAudio() { if (AC.state === 'suspended') AC.resume(); }
+
+// Generic envelope helper
+function playTone({ freq = 440, type = 'sine', attack = 0.01, sustain = 0.1,
+                    release = 0.15, gain = 0.4, freqEnd = null, when = 0 } = {}) {
+  resumeAudio();
+  const t  = AC.currentTime + when;
+  const osc = AC.createOscillator();
+  const env = AC.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, t);
+  if (freqEnd !== null) osc.frequency.exponentialRampToValueAtTime(freqEnd, t + attack + sustain);
+  env.gain.setValueAtTime(0, t);
+  env.gain.linearRampToValueAtTime(gain, t + attack);
+  env.gain.setValueAtTime(gain, t + attack + sustain);
+  env.gain.exponentialRampToValueAtTime(0.001, t + attack + sustain + release);
+  osc.connect(env);
+  env.connect(masterGain);
+  osc.start(t);
+  osc.stop(t + attack + sustain + release + 0.05);
+}
+
+// Noise burst (for miss/escape sfx)
+function playNoise({ duration = 0.15, gain = 0.3, when = 0 } = {}) {
+  resumeAudio();
+  const t = AC.currentTime + when;
+  const bufSize = AC.sampleRate * duration;
+  const buf = AC.createBuffer(1, bufSize, AC.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < bufSize; i++) data[i] = Math.random() * 2 - 1;
+  const src = AC.createBufferSource();
+  src.buffer = buf;
+  const env = AC.createGain();
+  const filt = AC.createBiquadFilter();
+  filt.type = 'bandpass';
+  filt.frequency.value = 800;
+  filt.Q.value = 0.8;
+  env.gain.setValueAtTime(gain, t);
+  env.gain.exponentialRampToValueAtTime(0.001, t + duration);
+  src.connect(filt);
+  filt.connect(env);
+  env.connect(masterGain);
+  src.start(t);
+  src.stop(t + duration + 0.05);
+}
+
+// ── Sound effects ─────────────────────────────────────────────────────
+
+// Peg hook — ascending blip
+function sfxPegHook(pegNumber) {
+  const freqs = [330, 392, 440, 494, 523, 587];
+  const f = freqs[Math.min(pegNumber, freqs.length - 1)];
+  playTone({ freq: f, type: 'square', attack: 0.005, sustain: 0.04,
+             release: 0.1, gain: 0.22, freqEnd: f * 1.5 });
+}
+
+// Loop closed — two-note chime
+function sfxLoopClosed() {
+  playTone({ freq: 523, type: 'sine', attack: 0.01, sustain: 0.12,
+             release: 0.3, gain: 0.35 });
+  playTone({ freq: 784, type: 'sine', attack: 0.01, sustain: 0.12,
+             release: 0.3, gain: 0.3, when: 0.14 });
+}
+
+// Catch! — happy ascending arpeggio
+function sfxCatch() {
+  [523, 659, 784, 1047].forEach((f, i) => {
+    playTone({ freq: f, type: 'sine', attack: 0.01, sustain: 0.08,
+               release: 0.2, gain: 0.3, when: i * 0.09 });
+  });
+}
+
+// Miss — descending wobbly tone
+function sfxMiss() {
+  playTone({ freq: 330, type: 'sawtooth', attack: 0.01, sustain: 0.15,
+             release: 0.25, gain: 0.25, freqEnd: 160 });
+  playNoise({ duration: 0.18, gain: 0.12, when: 0.05 });
+}
+
+// Mouse escapes through hole — swoosh
+function sfxHoleEscape() {
+  playTone({ freq: 800, type: 'sine', attack: 0.005, sustain: 0.05,
+             release: 0.2, gain: 0.28, freqEnd: 200 });
+  playNoise({ duration: 0.12, gain: 0.15, when: 0 });
+}
+
+// Cat footstep (soft click, called on walk cycle)
+let stepTimer = 0;
+function sfxStep(dt, moving) {
+  if (!moving) { stepTimer = 0; return; }
+  stepTimer -= dt;
+  if (stepTimer <= 0) {
+    stepTimer = 0.18;
+    playTone({ freq: 120 + Math.random() * 30, type: 'sine',
+               attack: 0.005, sustain: 0.02, release: 0.04, gain: 0.06 });
+  }
+}
+
+// Level up fanfare
+function sfxLevelUp() {
+  [392, 494, 587, 784].forEach((f, i) => {
+    playTone({ freq: f, type: 'triangle', attack: 0.01, sustain: 0.1,
+               release: 0.25, gain: 0.28, when: i * 0.1 });
+  });
+}
+
+// Game over — sad descending
+function sfxGameOver() {
+  [392, 330, 262, 196].forEach((f, i) => {
+    playTone({ freq: f, type: 'sawtooth', attack: 0.02, sustain: 0.15,
+               release: 0.3, gain: 0.22, when: i * 0.18 });
+  });
+}
+
+// Power-up collected — bright sparkle chord
+function sfxPowerup() {
+  [660, 880, 1100].forEach((f, i) => {
+    playTone({ freq: f, type: 'sine', attack: 0.005, sustain: 0.06,
+               release: 0.25, gain: 0.22, when: i * 0.05 });
+  });
+}
+
+// Freeze activate — icy descending gliss
+function sfxFreeze() {
+  playTone({ freq: 1200, type: 'sine', attack: 0.01, sustain: 0.08,
+             release: 0.4, gain: 0.2, freqEnd: 300 });
+}
+
+// Cheese spawn — soft twinkle
+function sfxCheeseSpawn() {
+  playTone({ freq: 1200, type: 'sine', attack: 0.005, sustain: 0.04,
+             release: 0.18, gain: 0.15 });
+  playTone({ freq: 1600, type: 'sine', attack: 0.005, sustain: 0.03,
+             release: 0.15, gain: 0.1, when: 0.06 });
+}
+
+// ── Background Music ──────────────────────────────────────────────────
+// Chiptune-style track: kick, snare, open hat, walking bass, chord stabs,
+// composed melody — all procedural Web Audio, no files needed.
+
+const musicGain = AC.createGain();
+musicGain.gain.value = 0;
+musicGain.connect(masterGain);
+
+// Compressor to glue the mix together
+const musicComp = AC.createDynamicsCompressor();
+musicComp.threshold.value = -18;
+musicComp.knee.value      = 6;
+musicComp.ratio.value     = 4;
+musicComp.attack.value    = 0.003;
+musicComp.release.value   = 0.15;
+musicComp.connect(musicGain);
+
+let musicPlaying    = false;
+let musicStep       = 0;   // current 16th-note step (0–31, 2-bar loop)
+let nextStepTime    = 0;
+let musicScheduleId = null;
+let musicTempo      = 148; // BPM — increases with level
+
+// ── Note tables ─────────────────────────────────────────────────────
+// C minor scale: C D Eb F G Ab Bb
+// Frequencies at octave 3 (×2 for oct4, ×0.5 for oct2)
+const C3=130.81, D3=146.83, Eb3=155.56, F3=174.61, G3=196.00, Ab3=207.65, Bb3=233.08;
+const C4=261.63, D4=293.66, Eb4=311.13, F4=349.23, G4=392.00, Ab4=415.30, Bb4=466.16;
+const C5=523.25, Eb5=622.25, G5=784.00;
+
+// 32-step composed melody (2 bars of 16th notes), null = rest
+const MELODY_SEQ = [
+  C4,  null, Eb4, null, G4,  null, Eb4, C4,
+  Bb3, null, C4,  Eb4,  G4,  Eb4, D4,  null,
+  C4,  Eb4,  G4,  Bb4,  Ab4, G4,  Eb4, C4,
+  D4,  null, F4,  null, G4,  Bb4, G4,  null,
+];
+
+// Walking bass line (32 steps, 1 note per 8th note = every 2 steps)
+const BASS_SEQ = [
+  C3,  C3,  G3,  G3,  Eb3, Eb3, Bb3+0, Bb3+0,
+  Ab3, Ab3, Eb3, Eb3, F3,  F3,  G3,  G3,
+];
+
+// Chord stabs — play on steps 0, 8, 16, 24
+// Each chord: array of frequencies played simultaneously
+const CHORDS = [
+  [C3*2, Eb3*2, G3*2],   // Cm
+  [Bb3,  D3*2,  F3*2],   // Bb
+  [Ab3,  C3*2,  Eb3*2],  // Ab
+  [G3,   Bb3,   D3*2],   // Gm
+];
+
+// ── Drum helpers ────────────────────────────────────────────────────
+function playKick(t) {
+  const o = AC.createOscillator();
+  const g = AC.createGain();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(160, t);
+  o.frequency.exponentialRampToValueAtTime(40, t + 0.08);
+  g.gain.setValueAtTime(0.9, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+  o.connect(g); g.connect(musicComp);
+  o.start(t); o.stop(t + 0.25);
+  musicNodes.push(o);
+}
+
+function playSnare(t) {
+  // Tonal body
+  const o = AC.createOscillator();
+  const og = AC.createGain();
+  o.type = 'triangle';
+  o.frequency.setValueAtTime(220, t);
+  o.frequency.exponentialRampToValueAtTime(110, t + 0.08);
+  og.gain.setValueAtTime(0.35, t);
+  og.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+  o.connect(og); og.connect(musicComp);
+  o.start(t); o.stop(t + 0.15);
+  // Noise snap
+  const sz = Math.floor(AC.sampleRate * 0.15);
+  const buf = AC.createBuffer(1, sz, AC.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < sz; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i/sz, 1.5);
+  const src = AC.createBufferSource(); src.buffer = buf;
+  const bpf = AC.createBiquadFilter(); bpf.type = 'bandpass'; bpf.frequency.value = 2200; bpf.Q.value = 0.7;
+  const ng = AC.createGain();
+  ng.gain.setValueAtTime(0.45, t); ng.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+  src.connect(bpf); bpf.connect(ng); ng.connect(musicComp);
+  src.start(t); musicNodes.push(o, src);
+}
+
+function playHat(t, open) {
+  const dur = open ? 0.18 : 0.04;
+  const sz = Math.floor(AC.sampleRate * dur);
+  const buf = AC.createBuffer(1, sz, AC.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < sz; i++) d[i] = (Math.random() * 2 - 1) * (1 - i/sz);
+  const src = AC.createBufferSource(); src.buffer = buf;
+  const hpf = AC.createBiquadFilter(); hpf.type = 'highpass'; hpf.frequency.value = 9000;
+  const g = AC.createGain();
+  g.gain.setValueAtTime(open ? 0.22 : 0.14, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  src.connect(hpf); hpf.connect(g); g.connect(musicComp);
+  src.start(t); musicNodes.push(src);
+}
+
+function playBassNote(t, freq, dur) {
+  const o = AC.createOscillator();
+  const g = AC.createGain();
+  // Sub + slight saw for grit
+  const o2 = AC.createOscillator();
+  const g2 = AC.createGain();
+  o.type = 'sine'; o.frequency.value = freq;
+  o2.type = 'sawtooth'; o2.frequency.value = freq;
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(0.42, t + 0.012);
+  g.gain.setValueAtTime(0.35, t + dur * 0.6);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  g2.gain.setValueAtTime(0.08, t);
+  g2.gain.exponentialRampToValueAtTime(0.001, t + dur * 0.4);
+  o.connect(g); g.connect(musicComp);
+  o2.connect(g2); g2.connect(musicComp);
+  o.start(t); o.stop(t + dur + 0.05);
+  o2.start(t); o2.stop(t + dur * 0.5);
+  musicNodes.push(o, o2);
+}
+
+function playMelodyNote(t, freq, dur, level) {
+  const o = AC.createOscillator();
+  const g = AC.createGain();
+  // Use square on higher levels for more bite
+  o.type = level >= 4 ? 'square' : 'triangle';
+  o.frequency.value = freq;
+  // Slight vibrato on higher levels
+  if (level >= 3) {
+    const lfo = AC.createOscillator();
+    const lfoG = AC.createGain();
+    lfo.frequency.value = 5.5;
+    lfoG.gain.value = 3;
+    lfo.connect(lfoG); lfoG.connect(o.frequency);
+    lfo.start(t); lfo.stop(t + dur + 0.05);
+    musicNodes.push(lfo);
+  }
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(0.18, t + 0.01);
+  g.gain.setValueAtTime(0.15, t + dur * 0.7);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  o.connect(g); g.connect(musicComp);
+  o.start(t); o.stop(t + dur + 0.05);
+  musicNodes.push(o);
+}
+
+function playChordStab(t, freqs, level) {
+  freqs.forEach(freq => {
+    const o = AC.createOscillator();
+    const g = AC.createGain();
+    o.type = 'sawtooth';
+    o.frequency.value = freq;
+    const stabDur = level >= 5 ? 0.18 : 0.12;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.1, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.001, t + stabDur);
+    o.connect(g); g.connect(musicComp);
+    o.start(t); o.stop(t + stabDur + 0.02);
+    musicNodes.push(o);
+  });
+}
+
+let musicNodes = [];
+
+function scheduleBeat() {
+  if (!musicPlaying) return;
+
+  const t    = nextStepTime;
+  const step = musicStep % 32;
+  const spb  = 60 / musicTempo / 4;  // seconds per 16th note
+  const lvl  = typeof currentLevel !== 'undefined' ? currentLevel : 0;
+
+  // ── Kick: steps 0, 8, 12, 24 (4-on-floor variant) ──
+  if (step === 0 || step === 8 || step === 16 || step === 24) playKick(t);
+  // Extra kicks on higher levels
+  if (lvl >= 4 && step === 12) playKick(t);
+
+  // ── Snare: steps 8, 24 (beats 2 and 4) ──
+  if (step === 8 || step === 24) playSnare(t);
+
+  // ── Hi-hat: every even step, open hat on offbeats ──
+  if (step % 2 === 0) {
+    const isOpen = (step % 16 === 4 || step % 16 === 12);
+    playHat(t, isOpen);
+  }
+  // 16th-note hi-hats on higher levels
+  if (lvl >= 3 && step % 2 === 1) playHat(t, false);
+
+  // ── Walking bass: every 2 steps ──
+  if (step % 2 === 0) {
+    const bassIdx = (step / 2) % BASS_SEQ.length;
+    const bassFreq = BASS_SEQ[bassIdx];
+    playBassNote(t, bassFreq, spb * 1.8);
+  }
+
+  // ── Chord stabs: steps 0, 8, 16, 24 ──
+  if (step % 8 === 0) {
+    const chordIdx = (step / 8) % CHORDS.length;
+    playChordStab(t, CHORDS[chordIdx], lvl);
+  }
+
+  // ── Melody ──
+  const melNote = MELODY_SEQ[step];
+  if (melNote) {
+    // On level 5+ add a harmony a minor third above
+    playMelodyNote(t, melNote, spb * 1.4, lvl);
+    if (lvl >= 5 && Math.random() < 0.5) {
+      playMelodyNote(t, melNote * 1.189, spb * 1.2, lvl);
+    }
+  }
+
+  // ── Advance ──
+  musicStep++;
+  nextStepTime += spb;
+  if (musicStep % 32 === 0) musicNodes = [];
+
+  const msUntilNext = (nextStepTime - AC.currentTime) * 1000 - 30;
+  musicScheduleId = setTimeout(scheduleBeat, Math.max(0, msUntilNext));
+}
+
+function startMusic() {
+  if (musicPlaying) return;
+  resumeAudio();
+  musicPlaying = true;
+  musicStep    = 0;
+  nextStepTime = AC.currentTime + 0.1;
+  musicGain.gain.cancelScheduledValues(AC.currentTime);
+  musicGain.gain.setValueAtTime(0, AC.currentTime);
+  musicGain.gain.linearRampToValueAtTime(0.85, AC.currentTime + 1.8);
+  scheduleBeat();
+}
+
+function stopMusic() {
+  musicPlaying = false;
+  clearTimeout(musicScheduleId);
+  musicGain.gain.cancelScheduledValues(AC.currentTime);
+  musicGain.gain.setValueAtTime(musicGain.gain.value, AC.currentTime);
+  musicGain.gain.linearRampToValueAtTime(0, AC.currentTime + 0.5);
+  musicNodes.forEach(n => { try { n.stop(AC.currentTime + 0.6); } catch(e){} });
+  musicNodes = [];
+}
+
+// Ramp up tempo and gain as levels increase
+function updateMusicTempo() {
+  // Tempo increases from 148 BPM (level 1) to 178 BPM (level 8)
+  musicTempo = 148 + currentLevel * 4;
+  const intensity = 0.75 + (currentLevel / LEVEL_DATA.length) * 0.35;
+  musicGain.gain.cancelScheduledValues(AC.currentTime + 0.5);
+  musicGain.gain.linearRampToValueAtTime(Math.min(1.1, intensity), AC.currentTime + 1.2);
+}
+
+// ── Game state ─────────────────────────────────────────────────────────
+let running      = false;
+let gameOverFired = false;
+let lastTime     = 0;
+let score        = 0;
+let highScore    = 0;
+let lives        = 3;
+let message      = '';
+let msgTimer     = 0;
+let misses       = 0;       // misses this level attempt
+let levelTimer   = 0;       // time spent on current level (for time bonus)
+let firstAttempt = true;    // no misses yet this level
+let displayScore = 0;       // animated score display value
+let scoreBump    = 0;       // score bump animation timer
+
+// ── Mouse holes ─────────────────────────────────────────────────────────
+const HOLES = [
+  { x: 60,  y: 200 },
+  { x: 640, y: 200 },
+  { x: 60,  y: 600 },
+  { x: 640, y: 600 },
+  { x: 350, y: 760 },
+];
+// Holes only active from level 2 onwards
+function holesActive() { return currentLevel >= 1; }
+
+// ── Cheese ──────────────────────────────────────────────────────────────
+let cheese = null;  // { x, y, timer } — null when not present
+// Cheese active from level 3 onwards
+function cheeseActive() { return currentLevel >= 2; }
+function spawnCheese() {
+  sfxCheeseSpawn();
+  cheese = {
+    x: 100 + Math.random() * 500,
+    y: 100 + Math.random() * 600,
+    timer: 6 + Math.random() * 4,
+    wobble: 0,
+  };
+}
+
+// ── Power-ups ─────────────────────────────────────────────────────────
+const POWERUP_TYPES = [
+  { id: 'speed',  label: '⚡ SPEED BOOST',  color: '#40e0ff', bg: '#003344', duration: 5  },
+  { id: 'freeze', label: '🧊 FREEZE!',       color: '#80d0ff', bg: '#001833', duration: 3  },
+  { id: 'bignet', label: '🔮 BIG NET',        color: '#cc80ff', bg: '#220044', duration: 6  },
+];
+let activePowerup  = null;   // { id, timer, label, color }
+let powerupPickup  = null;   // { x, y, type, wobble, lifetime }
+let powerupSpawnTimer = 12;  // seconds until next spawn
+
+function spawnPowerup() {
+  const type = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
+  // Avoid spawning on top of pegs or holes
+  let x, y, tries = 0;
+  do {
+    x = 80 + Math.random() * 540;
+    y = 100 + Math.random() * 620;
+    tries++;
+  } while (tries < 20 && (
+    PEGS.some(p  => Math.hypot(x - p.x,  y - p.y)  < 60) ||
+    HOLES.some(h => Math.hypot(x - h.x,  y - h.y)  < 60)
+  ));
+  powerupPickup = { x, y, type, wobble: 0, lifetime: 8 };
+}
+
+function activatePowerup(type) {
+  activePowerup = { id: type.id, timer: type.duration,
+                    label: type.label, color: type.color };
+  powerupPickup = null;
+  powerupSpawnTimer = 10 + Math.random() * 8;
+  sfxPowerup();
+  message  = type.label + '!';
+  msgTimer = 1.8;
+}
+
+function getPegSnap()     { return activePowerup?.id === 'bignet'  ? PEG_SNAP * 2.2 : PEG_SNAP; }
+function getPlayerSpeed() { return activePowerup?.id === 'speed'   ? player.speed * 1.8 : player.speed; }
+function isFrozen()       { return activePowerup?.id === 'freeze'; }
+
+// ── Level definitions ──────────────────────────────────────────────────
+const LEVEL_DATA = [
+  {
+    label: 'Level 1',
+    pegs: [
+      { x: 160, y: 320, id: 0 },
+      { x: 350, y: 260, id: 1 },
+      { x: 540, y: 320, id: 2 },
+      { x: 540, y: 620, id: 3 },
+      { x: 350, y: 690, id: 4 },
+      { x: 160, y: 620, id: 5 },
+    ],
+    mouseSpeed: 1.0,
+  },
+  {
+    label: 'Level 2',
+    pegs: [
+      { x: 160, y: 300, id: 0 },
+      { x: 540, y: 300, id: 1 },
+      { x: 620, y: 560, id: 2 },
+      { x: 350, y: 700, id: 3 },
+      { x: 80,  y: 560, id: 4 },
+    ],
+    mouseSpeed: 1.5,
+  },
+  {
+    label: 'Level 3',
+    pegs: [
+      { x: 180, y: 280, id: 0 },
+      { x: 520, y: 280, id: 1 },
+      { x: 520, y: 680, id: 2 },
+      { x: 180, y: 680, id: 3 },
+    ],
+    mouseSpeed: 2.0,
+  },
+  {
+    label: 'Level 4',
+    pegs: [
+      { x: 350, y: 220, id: 0 },
+      { x: 570, y: 640, id: 1 },
+      { x: 130, y: 640, id: 2 },
+    ],
+    mouseSpeed: 2.5,
+  },
+  {
+    label: 'Level 5',
+    pegs: [
+      { x: 160, y: 320, id: 0 },
+      { x: 350, y: 260, id: 1 },
+      { x: 540, y: 320, id: 2 },
+      { x: 540, y: 620, id: 3 },
+      { x: 350, y: 690, id: 4 },
+      { x: 160, y: 620, id: 5 },
+    ],
+    mouseSpeed: 1.0,
+    twoMice: true,
+  },
+  {
+    label: 'Level 6',
+    pegs: [
+      { x: 160, y: 300, id: 0 },
+      { x: 540, y: 300, id: 1 },
+      { x: 620, y: 560, id: 2 },
+      { x: 350, y: 700, id: 3 },
+      { x: 80,  y: 560, id: 4 },
+    ],
+    mouseSpeed: 1.5,
+    twoMice: true,
+  },
+  {
+    label: 'Level 7',
+    pegs: [
+      { x: 180, y: 280, id: 0 },
+      { x: 520, y: 280, id: 1 },
+      { x: 520, y: 680, id: 2 },
+      { x: 180, y: 680, id: 3 },
+    ],
+    mouseSpeed: 2.0,
+    twoMice: true,
+  },
+  {
+    label: 'Level 8',
+    pegs: [
+      { x: 350, y: 220, id: 0 },
+      { x: 570, y: 640, id: 1 },
+      { x: 130, y: 640, id: 2 },
+    ],
+    mouseSpeed: 2.5,
+    twoMice: true,
+  },
+];
+
+let currentLevel = 0;
+let PEGS = LEVEL_DATA[0].pegs.slice();
+const PEG_SNAP = 55;
+
+// ── Rope / net state ───────────────────────────────────────────────────
+let connectedPegs = [];
+let netDropped    = false;
+let netAlpha      = 0;
+let caught        = false;
+
+// ── Player (cat) ────────────────────────────────────────────────────────
+const player = {
+  x: 350, y: 200,
+  radius: 28,         // collision radius — unchanged
+  speed: 190,
+  // animation
+  walkFrame: 0,       // 0..1 cycle
+  facing: 1,          // 1=right, -1=left
+  tailAngle: 0,
+  blinkTimer: 3,
+  isBlinking: false,
+};
+
+// ── Mouse ──────────────────────────────────────────────────────────────
+function makeMouse(x, y) {
+  return { x, y, radius: 18, vx: 70, vy: 45, wanderTimer: 0, tailAngle: 0, facing: 1, caught: false, escapeCooldown: 0 };
+}
+let mice = [makeMouse(350, 520)];
+const MOUSE_ZONE = { x1: 20, y1: 60, x2: 680, y2: 780 };
+
+// ── Helpers ────────────────────────────────────────────────────────────
+function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+
+function pointInPoly(px, py, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x, yi = poly[i].y;
+    const xj = poly[j].x, yj = poly[j].y;
+    if (((yi > py) !== (yj > py)) &&
+        (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
+
+// ── Draw: Cat (player) ─────────────────────────────────────────────────
+function drawCat(x, y, facing, walkFrame, tailAngle, blinking) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(facing, 1);   // flip horizontally based on direction
+
+  const walk = Math.sin(walkFrame * Math.PI * 2);
+
+  // --- Tail (behind body) ---
+  ctx.strokeStyle = '#e8a830';
+  ctx.lineWidth = 4;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-10, 8);
+  ctx.bezierCurveTo(
+    -28, 8 + Math.sin(tailAngle) * 12,
+    -36, -10 + Math.sin(tailAngle + 1) * 10,
+    -30, -24 + Math.sin(tailAngle + 2) * 8
+  );
+  ctx.stroke();
+
+  // --- Body ---
+  ctx.beginPath();
+  ctx.ellipse(0, 6, 20, 15, 0, 0, Math.PI * 2);
+  ctx.fillStyle = '#f0c040';
+  ctx.fill();
+  ctx.strokeStyle = '#c89020';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Belly patch
+  ctx.beginPath();
+  ctx.ellipse(2, 9, 11, 9, 0, 0, Math.PI * 2);
+  ctx.fillStyle = '#fff8e8';
+  ctx.fill();
+
+  // --- Legs (simple animated stubs) ---
+  const legSwing = walk * 5;
+  ctx.strokeStyle = '#c89020';
+  ctx.lineWidth = 5;
+  ctx.lineCap = 'round';
+  // back legs
+  ctx.beginPath(); ctx.moveTo(-8, 18); ctx.lineTo(-10 - legSwing, 30); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-2, 19); ctx.lineTo(-2 + legSwing, 30); ctx.stroke();
+  // front legs
+  ctx.beginPath(); ctx.moveTo(6,  17); ctx.lineTo(8  + legSwing, 30); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(12, 16); ctx.lineTo(12 - legSwing, 30); ctx.stroke();
+
+  // --- Head ---
+  ctx.beginPath();
+  ctx.arc(16, -8, 17, 0, Math.PI * 2);
+  ctx.fillStyle = '#f0c040';
+  ctx.fill();
+  ctx.strokeStyle = '#c89020';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Ears — angled outward so base follows the curve of the head
+  function ear(ex, ey, tiltAngle) {
+    ctx.save();
+    ctx.translate(ex, ey);
+    ctx.rotate(tiltAngle);
+    // outer ear
+    ctx.beginPath();
+    ctx.moveTo(-8, 0);
+    ctx.lineTo( 8, 0);
+    ctx.lineTo( 0, -16);
+    ctx.closePath();
+    ctx.fillStyle = '#f0c040';
+    ctx.fill();
+    ctx.strokeStyle = '#c89020';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // inner pink
+    ctx.beginPath();
+    ctx.moveTo(-4, -1);
+    ctx.lineTo( 4, -1);
+    ctx.lineTo( 0, -11);
+    ctx.closePath();
+    ctx.fillStyle = '#ffaabb';
+    ctx.fill();
+    ctx.restore();
+  }
+  ear(8,  -23, -0.32);   // left ear tilts left
+  ear(24, -23,  0.32);   // right ear tilts right
+
+  // Face
+  // Eyes
+  if (blinking) {
+    // closed eyes — just a line
+    ctx.strokeStyle = '#553300';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(9, -9); ctx.lineTo(15, -9); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(19, -9); ctx.lineTo(25, -9); ctx.stroke();
+  } else {
+    // open eyes
+    ctx.beginPath(); ctx.arc(12, -9, 4, 0, Math.PI * 2);
+    ctx.fillStyle = '#66cc44';
+    ctx.fill();
+    ctx.beginPath(); ctx.arc(22, -9, 4, 0, Math.PI * 2);
+    ctx.fillStyle = '#66cc44';
+    ctx.fill();
+    // pupils
+    ctx.beginPath(); ctx.arc(12, -9, 2, 0, Math.PI * 2);
+    ctx.fillStyle = '#111';
+    ctx.fill();
+    ctx.beginPath(); ctx.arc(22, -9, 2, 0, Math.PI * 2);
+    ctx.fillStyle = '#111';
+    ctx.fill();
+    // shine
+    ctx.beginPath(); ctx.arc(13.2, -10.2, 0.9, 0, Math.PI * 2);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+    ctx.beginPath(); ctx.arc(23.2, -10.2, 0.9, 0, Math.PI * 2);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+  }
+
+  // Nose
+  ctx.beginPath();
+  ctx.moveTo(17, -3);
+  ctx.lineTo(15, -1);
+  ctx.lineTo(19, -1);
+  ctx.closePath();
+  ctx.fillStyle = '#ff8899';
+  ctx.fill();
+
+  // Mouth
+  ctx.strokeStyle = '#884422';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(15, -1); ctx.quadraticCurveTo(13, 2, 11, 2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(19, -1); ctx.quadraticCurveTo(21, 2, 23, 2); ctx.stroke();
+
+  // Whiskers
+  ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+  ctx.lineWidth = 1;
+  for (let s of [-1, 1]) {
+    // left side
+    ctx.beginPath(); ctx.moveTo(14, -2 + s * 2); ctx.lineTo(2,  -2 + s * 4); ctx.stroke();
+    // right side
+    ctx.beginPath(); ctx.moveTo(20, -2 + s * 2); ctx.lineTo(32, -2 + s * 4); ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+// ── Draw: Mouse ─────────────────────────────────────────────────────────
+function drawMouse(m) {
+  const { x, y, tailAngle, facing, caught: isCaught } = m;
+  if (isFrozen() && !isCaught) {
+    ctx.save();
+    ctx.globalAlpha = 0.3 + 0.1 * Math.sin(Date.now() * 0.008);
+    ctx.fillStyle = '#aaddff';
+    ctx.beginPath();
+    ctx.ellipse(x, y, 26, 20, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(facing, 1);
+
+  // Body
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 18, 13, 0, 0, Math.PI * 2);
+  ctx.fillStyle = isCaught ? '#ff8888' : '#ccbbaa';
+  ctx.fill();
+  ctx.strokeStyle = '#887766';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Head
+  ctx.beginPath();
+  ctx.arc(16, -3, 10, 0, Math.PI * 2);
+  ctx.fillStyle = isCaught ? '#ff9999' : '#ccbbaa';
+  ctx.fill();
+  ctx.stroke();
+
+  // Ears
+  ctx.beginPath(); ctx.arc(13, -12, 6, 0, Math.PI * 2);
+  ctx.fillStyle = '#ffaabb'; ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.arc(23, -11, 5, 0, Math.PI * 2);
+  ctx.fillStyle = '#ffaabb'; ctx.fill(); ctx.stroke();
+
+  // Eye
+  ctx.beginPath(); ctx.arc(21, -4, 2.5, 0, Math.PI * 2);
+  ctx.fillStyle = isCaught ? '#ff4444' : '#222'; ctx.fill();
+  ctx.beginPath(); ctx.arc(21.8, -4.8, 1, 0, Math.PI * 2);
+  ctx.fillStyle = '#fff'; ctx.fill();
+
+  // Nose
+  ctx.beginPath(); ctx.arc(26.5, -1, 2, 0, Math.PI * 2);
+  ctx.fillStyle = '#ff8899'; ctx.fill();
+
+  // Whiskers
+  ctx.strokeStyle = 'rgba(150,130,120,0.7)';
+  ctx.lineWidth = 1;
+  for (let s of [-1, 1]) {
+    ctx.beginPath(); ctx.moveTo(26, -1 + s * 2); ctx.lineTo(38, -1 + s * 5); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(26, -1 + s * 1); ctx.lineTo(38, -1 + s * 1); ctx.stroke();
+  }
+
+  // Tail
+  ctx.strokeStyle = '#aa9988';
+  ctx.lineWidth = 2; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-18, 4);
+  const tw = tailAngle;
+  ctx.bezierCurveTo(-30, 4 + Math.sin(tw) * 10,
+                    -40, 4 + Math.sin(tw + 1) * 14,
+                    -50, Math.sin(tw + 2) * 12);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+// ── Draw: Hole ────────────────────────────────────────────────────────
+function drawHole(hole) {
+  if (!holesActive()) return;
+  ctx.save();
+  // Outer dark ring
+  ctx.beginPath();
+  ctx.arc(hole.x, hole.y, 18, 0, Math.PI * 2);
+  ctx.fillStyle = '#050508';
+  ctx.fill();
+  ctx.strokeStyle = '#2a1a00';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  // Inner void
+  ctx.beginPath();
+  ctx.arc(hole.x, hole.y, 11, 0, Math.PI * 2);
+  const grad = ctx.createRadialGradient(hole.x, hole.y, 0, hole.x, hole.y, 11);
+  grad.addColorStop(0, '#000');
+  grad.addColorStop(1, '#1a0a00');
+  ctx.fillStyle = grad;
+  ctx.fill();
+  // Rim highlight
+  ctx.beginPath();
+  ctx.arc(hole.x, hole.y, 18, Math.PI * 1.1, Math.PI * 1.6);
+  ctx.strokeStyle = 'rgba(120,80,20,0.5)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ── Draw: Cheese ───────────────────────────────────────────────────────
+function drawCheese() {
+  if (!cheese) return;
+  const { x, y, wobble } = cheese;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(Math.sin(wobble * 3) * 0.08);
+  // Body — wedge shape
+  ctx.beginPath();
+  ctx.moveTo(-14, 8);
+  ctx.lineTo(14, 8);
+  ctx.lineTo(10, -10);
+  ctx.lineTo(-10, -10);
+  ctx.closePath();
+  ctx.fillStyle = '#f5d020';
+  ctx.fill();
+  ctx.strokeStyle = '#c8a000';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  // Holes
+  ctx.fillStyle = '#c8a000';
+  ctx.beginPath(); ctx.arc(-4, 2, 3, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(5, -2, 2.5, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(-1, -7, 2, 0, Math.PI * 2); ctx.fill();
+  // Glow
+  ctx.shadowBlur = 14;
+  ctx.shadowColor = '#f5d02088';
+  ctx.beginPath();
+  ctx.arc(0, 0, 16, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(245,208,32,0.15)';
+  ctx.lineWidth = 6;
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ── Draw: Power-up pickup ────────────────────────────────────────────
+function drawPowerupPickup() {
+  if (!powerupPickup) return;
+  const { x, y, type, wobble } = powerupPickup;
+  const pulse = 0.5 + 0.5 * Math.sin(wobble * 4);
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(Math.sin(wobble * 2) * 0.15);
+
+  // Outer glow ring
+  ctx.beginPath();
+  ctx.arc(0, 0, 22 + pulse * 6, 0, Math.PI * 2);
+  ctx.strokeStyle = type.color + '55';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  // Body
+  ctx.beginPath();
+  ctx.arc(0, 0, 18, 0, Math.PI * 2);
+  ctx.fillStyle = type.bg;
+  ctx.fill();
+  ctx.strokeStyle = type.color;
+  ctx.lineWidth = 2.5;
+  ctx.shadowBlur = 14;
+  ctx.shadowColor = type.color;
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // Icon emoji
+  ctx.font = '16px serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(type.label.split(' ')[0], 0, 1);
+  ctx.textBaseline = 'alphabetic';
+  ctx.restore();
+}
+
+// ── Draw: Active power-up HUD indicator ───────────────────────────────
+function drawActivePowerup() {
+  if (!activePowerup) return;
+  const { label, color, timer, id } = activePowerup;
+  const maxTime = POWERUP_TYPES.find(p => p.id === id)?.duration || 5;
+  const frac = timer / maxTime;
+  const pulse = id === 'freeze' ? 0.5 + 0.5 * Math.sin(Date.now() * 0.006) : 1;
+
+  ctx.save();
+  // Bar background
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.beginPath();
+  ctx.roundRect(14, 56, 180, 28, 6);
+  ctx.fill();
+
+  // Fill bar
+  ctx.fillStyle = color;
+  ctx.globalAlpha = 0.85;
+  ctx.beginPath();
+  ctx.roundRect(14, 56, 180 * frac, 28, 6);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // Label
+  ctx.fillStyle = '#fff';
+  ctx.font = `bold 12px Courier New`;
+  ctx.textAlign = 'left';
+  ctx.shadowBlur = id === 'freeze' ? 8 * pulse : 0;
+  ctx.shadowColor = color;
+  ctx.fillText(label + '  ' + timer.toFixed(1) + 's', 20, 75);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
+// ── Draw: Peg ──────────────────────────────────────────────────────────
+function drawPeg(peg, isNext, isConnected) {
+  const r = 12;
+  if (isNext) {
+    const pulse = 0.5 + 0.5 * Math.sin(Date.now() * 0.006);
+    ctx.beginPath();
+    ctx.arc(peg.x, peg.y, r + 8 + pulse * 8, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(64,224,255,${0.3 + 0.4 * pulse})`;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+  ctx.beginPath();
+  ctx.arc(peg.x, peg.y, r, 0, Math.PI * 2);
+  ctx.fillStyle = isConnected ? '#40e0ff' : (isNext ? '#80f0ff' : '#557788');
+  ctx.fill();
+  ctx.strokeStyle = isConnected ? '#00aacc' : '#334455';
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(peg.x, peg.y, 4, 0, Math.PI * 2);
+  ctx.fillStyle = isConnected ? '#003344' : '#1a2a33';
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 10px Courier New';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(peg.id + 1, peg.x, peg.y + 20);
+  ctx.textBaseline = 'alphabetic';
+}
+
+// ── Draw: Rope ─────────────────────────────────────────────────────────
+function drawRope() {
+  if (connectedPegs.length < 1) return;
+  ctx.save();
+  ctx.strokeStyle = '#c8a060';
+  ctx.lineWidth   = 3;
+  ctx.lineJoin    = 'round';
+  ctx.lineCap     = 'round';
+  ctx.setLineDash([6, 4]);
+  for (let i = 0; i < connectedPegs.length - 1; i++) {
+    const a = PEGS[connectedPegs[i]];
+    const b = PEGS[connectedPegs[i + 1]];
+    const midX = (a.x + b.x) / 2;
+    const midY = (a.y + b.y) / 2 + 18;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.quadraticCurveTo(midX, midY, b.x, b.y);
+    ctx.stroke();
+  }
+  // Draw closing segment back to peg 1 once net is dropped
+  if (netDropped && connectedPegs.length === PEGS.length) {
+    const last = PEGS[connectedPegs[connectedPegs.length - 1]];
+    const first = PEGS[0];
+    const midX = (last.x + first.x) / 2;
+    const midY = (last.y + first.y) / 2 + 18;
+    ctx.strokeStyle = '#f0c040';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(last.x, last.y);
+    ctx.quadraticCurveTo(midX, midY, first.x, first.y);
+    ctx.stroke();
+  }
+  // Live rope from last peg to player (targets peg 1 once all 4 are hooked)
+  if (!netDropped) {
+    const last = PEGS[connectedPegs[connectedPegs.length - 1]];
+    const midX = (last.x + player.x) / 2;
+    const midY = (last.y + player.y) / 2 + 10;
+    ctx.strokeStyle = '#a08040';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(last.x, last.y);
+    ctx.quadraticCurveTo(midX, midY, player.x, player.y);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ── Draw: Net ──────────────────────────────────────────────────────────
+function drawNet() {
+  if (!netDropped) return;
+  const poly = connectedPegs.map(i => PEGS[i]);
+  if (poly.length < 3) return;  // need at least a triangle
+  ctx.save();
+  ctx.globalAlpha = netAlpha;
+
+  // Clipping path = the polygon shape
+  ctx.beginPath();
+  ctx.moveTo(poly[0].x, poly[0].y);
+  for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
+  ctx.closePath();
+  ctx.fillStyle = caught ? 'rgba(80,255,120,0.15)' : 'rgba(200,160,80,0.15)';
+  ctx.fill();
+
+  // Draw net grid clipped to polygon
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(poly[0].x, poly[0].y);
+  for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
+  ctx.closePath();
+  ctx.clip();
+
+  const xs = poly.map(p => p.x), ys = poly.map(p => p.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  ctx.strokeStyle = caught ? '#60ff90' : '#c8a060';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([]);
+  for (let c = 0; c <= 8; c++) {
+    const t = c / 8, gx = minX + t * (maxX - minX);
+    ctx.beginPath(); ctx.moveTo(gx, minY); ctx.lineTo(gx, maxY); ctx.stroke();
+  }
+  for (let r = 0; r <= 8; r++) {
+    const t = r / 8, gy = minY + t * (maxY - minY);
+    ctx.beginPath(); ctx.moveTo(minX, gy); ctx.lineTo(maxX, gy); ctx.stroke();
+  }
+  ctx.restore();
+
+  // Border outline
+  ctx.strokeStyle = caught ? '#40ff70' : '#f0c040';
+  ctx.lineWidth = 3;
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.moveTo(poly[0].x, poly[0].y);
+  for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
+  ctx.closePath();
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+// ── Draw: Background ───────────────────────────────────────────────────
+function drawBackground() {
+  ctx.fillStyle = '#111218';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+  ctx.strokeStyle = '#1e1e30';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.roundRect(12, 58, canvas.width - 24, canvas.height - 76, 8);
+  ctx.stroke();
+  ctx.restore();
+
+  // (mouse roams full canvas — no zone highlight needed)
+  // HUD
+  ctx.fillStyle = '#0d0d1a';
+  ctx.fillRect(0, 0, canvas.width, 50);
+  ctx.strokeStyle = '#2a2a3a';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, 50); ctx.lineTo(canvas.width, 50); ctx.stroke();
+  ctx.fillStyle = '#f0c040';
+  ctx.font = 'bold 18px Courier New';
+  ctx.textAlign = 'left';
+  ctx.fillText('🐱 CAT VS MOUSE', 14, 32);
+  ctx.fillStyle = '#aaa';
+  ctx.font = '13px Courier New';
+  ctx.textAlign = 'center';
+  const total = PEGS.length;
+  const pegDisplay = netDropped ? '✓' : connectedPegs.length < total ? `${connectedPegs.length}/${total}` : `${total}/${total} → close loop`;
+  const timeStr = netDropped ? '' : `  ⏱${Math.floor(levelTimer)}s`;
+  ctx.fillText(`${LEVEL_DATA[currentLevel].label}  •  Peg: ${pegDisplay}${timeStr}`, canvas.width / 2, 32);
+  // Score (animated, bumps when points added)
+  const bump = scoreBump > 0 ? 1 + scoreBump * 0.4 : 1;
+  ctx.save();
+  ctx.translate(canvas.width - 14, 32);
+  ctx.scale(bump, bump);
+  ctx.fillStyle = scoreBump > 0 ? '#ffe060' : '#f0c040';
+  ctx.font = `bold 15px Courier New`;
+  ctx.textAlign = 'right';
+  ctx.fillText(`${displayScore}pts`, 0, 0);
+  ctx.restore();
+  // Lives
+  ctx.fillStyle = '#e04040';
+  ctx.font = '13px Courier New';
+  ctx.textAlign = 'right';
+  ctx.fillText('❤️'.repeat(Math.max(0, lives)), canvas.width - 14, 14);
+  // Level progress dots
+  const dotY = 14, dotR = 4, dotGap = 12;
+  const totalLevels = LEVEL_DATA.length;
+  const dotsW = totalLevels * dotGap;
+  const dotsX = canvas.width / 2 - dotsW / 2;
+  for (let i = 0; i < totalLevels; i++) {
+    ctx.beginPath();
+    ctx.arc(dotsX + i * dotGap, dotY, dotR, 0, Math.PI * 2);
+    ctx.fillStyle = i < currentLevel ? '#f0c040' : i === currentLevel ? '#fff' : '#333';
+    ctx.fill();
+  }
+  // Hi score
+  if (highScore > 0) {
+    ctx.fillStyle = '#555';
+    ctx.font = '11px Courier New';
+    ctx.textAlign = 'left';
+    ctx.fillText(`HI:${highScore}`, 14, 14);
+  }
+  ctx.textAlign = 'left';
+}
+
+function drawMessage() {
+  if (msgTimer <= 0) return;
+  const alpha = Math.min(1, msgTimer / 0.4);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font = 'bold 22px Courier New';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#f0c040';
+  ctx.shadowBlur = 12;
+  ctx.shadowColor = '#f0c04088';
+  ctx.fillText(message, canvas.width / 2, 160);
+  ctx.restore();
+}
+
+// ── Reset ──────────────────────────────────────────────────────────────
+function resetLevel() {
+  const lvl = LEVEL_DATA[currentLevel];
+  PEGS = lvl.pegs.slice();
+  connectedPegs = [];
+  netDropped    = false;
+  netAlpha      = 0;
+  caught        = false;
+  levelTimer    = 0;
+  firstAttempt  = true;
+  activePowerup = null;
+  powerupPickup = null;
+  powerupSpawnTimer = 12;
+  particles = [];
+  trail = [];
+  shakeAmt = 0; shakeDur = 0;
+  player.x = 350; player.y = 200;
+  player.walkFrame = 0; player.tailAngle = 0;
+  const count = lvl.twoMice ? 2 : 1;
+  mice = [];
+  const startPositions = [[250, 480], [450, 560]];
+  for (let i = 0; i < count; i++) {
+    const m = makeMouse(startPositions[i][0], startPositions[i][1]);
+    const spd = (70 + Math.random() * 40) * lvl.mouseSpeed;
+    const ang = Math.random() * Math.PI * 2;
+    m.vx = Math.cos(ang) * spd;
+    m.vy = Math.sin(ang) * spd;
+    mice.push(m);
+  }
+}
+
+// ── Particles ────────────────────────────────────────────────────────
+let particles = [];
+
+function spawnParticles(x, y, count, color, opts = {}) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = (opts.minSpd || 40) + Math.random() * (opts.maxSpd || 120);
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 1,
+      decay: (opts.decay || 0.8) + Math.random() * 0.4,
+      size: (opts.size || 3) + Math.random() * (opts.sizeVar || 3),
+      color,
+      gravity: opts.gravity || 0,
+      trail: opts.trail || false,
+    });
+  }
+}
+
+function updateParticles(dt) {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x    += p.vx * dt;
+    p.y    += p.vy * dt;
+    p.vy   += p.gravity * dt;
+    p.vx   *= 0.98;
+    p.vy   *= 0.98;
+    p.life -= p.decay * dt;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+}
+
+function drawParticles() {
+  particles.forEach(p => {
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, p.life);
+    ctx.fillStyle   = p.color;
+    ctx.shadowBlur  = p.trail ? 8 : 4;
+    ctx.shadowColor = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  });
+}
+
+// ── Screen shake ──────────────────────────────────────────────────────
+let shakeAmt  = 0;
+let shakeDur  = 0;
+
+function screenShake(amount, duration) {
+  shakeAmt = Math.max(shakeAmt, amount);
+  shakeDur = Math.max(shakeDur, duration);
+}
+
+function applyShake() {
+  if (shakeDur <= 0) return;
+  const ox = (Math.random() - 0.5) * shakeAmt * 2;
+  const oy = (Math.random() - 0.5) * shakeAmt * 2;
+  ctx.translate(ox, oy);
+}
+
+function tickShake(dt) {
+  if (shakeDur > 0) {
+    shakeDur -= dt;
+    shakeAmt *= 0.85;
+    if (shakeDur <= 0) { shakeDur = 0; shakeAmt = 0; }
+  }
+}
+
+// ── Motion trail for speed boost ─────────────────────────────────────
+let trail = [];  // { x, y, age }
+
+function updateTrail(dt) {
+  if (activePowerup?.id === 'speed') {
+    trail.push({ x: player.x, y: player.y, age: 0 });
+  }
+  for (let i = trail.length - 1; i >= 0; i--) {
+    trail[i].age += dt;
+    if (trail[i].age > 0.25) trail.splice(i, 1);
+  }
+}
+
+function drawTrail() {
+  if (!activePowerup?.id === 'speed') { trail = []; return; }
+  trail.forEach(t => {
+    const a = Math.max(0, 1 - t.age / 0.25) * 0.35;
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.fillStyle   = '#40e0ff';
+    ctx.shadowBlur  = 10;
+    ctx.shadowColor = '#40e0ff';
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, 12 * (1 - t.age / 0.25), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  });
+}
+
+// ── Rope segment collision ──────────────────────────────────────────────
+// Returns the active rope segments as pairs of {x,y} points (not dropped loop)
+function getRopeSegments() {
+  const segs = [];
+  if (connectedPegs.length < 2) return segs;
+  for (let i = 0; i < connectedPegs.length - 1; i++) {
+    segs.push({ a: PEGS[connectedPegs[i]], b: PEGS[connectedPegs[i + 1]] });
+  }
+  // If net is dropped, add the closing segment back to peg 0
+  if (netDropped && connectedPegs.length === PEGS.length) {
+    segs.push({ a: PEGS[connectedPegs[connectedPegs.length - 1]], b: PEGS[0] });
+  }
+  return segs;
+}
+
+// Signed distance from point (px,py) to segment (ax,ay)→(bx,by)
+// Positive = left of direction a→b, negative = right
+function signedDistToSegment(px, py, ax, ay, bx, by) {
+  // Normal of segment (perpendicular, pointing left)
+  const dx = bx - ax, dy = by - ay;
+  const len = Math.hypot(dx, dy);
+  if (len === 0) return 0;
+  const nx = -dy / len, ny = dx / len;
+  return (px - ax) * nx + (py - ay) * ny;
+}
+
+// Closest point on segment to point p, and parametric t
+function closestPointOnSegment(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return { x: ax, y: ay, t: 0 };
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+  return { x: ax + t * dx, y: ay + t * dy, t };
+}
+
+function collideMiceWithRope(m) {
+  const ROPE_RADIUS = 10; // how close mouse can get to rope
+  const segs = getRopeSegments();
+  for (const { a, b } of segs) {
+    const cp = closestPointOnSegment(m.x, m.y, a.x, a.y, b.x, b.y);
+    const distToSeg = Math.hypot(m.x - cp.x, m.y - cp.y);
+    if (distToSeg < ROPE_RADIUS) {
+      // Push mouse away from the rope
+      const pushX = m.x - cp.x;
+      const pushY = m.y - cp.y;
+      const pushLen = Math.hypot(pushX, pushY);
+      if (pushLen === 0) continue;
+      const nx = pushX / pushLen;
+      const ny = pushY / pushLen;
+      // Reposition mouse outside rope radius
+      m.x = cp.x + nx * (ROPE_RADIUS + 1);
+      m.y = cp.y + ny * (ROPE_RADIUS + 1);
+      // Reflect velocity component along normal (bounce off rope)
+      const dot = m.vx * nx + m.vy * ny;
+      if (dot < 0) { // only reflect if moving toward rope
+        m.vx -= 2 * dot * nx;
+        m.vy -= 2 * dot * ny;
+      }
+    }
+  }
+}
+
+// ── Update ─────────────────────────────────────────────────────────────
+function update(dt) {
+  // Player movement
+  let dx = 0, dy = 0;
+  if (keys['ArrowLeft']  || keys['a'] || keys['A']) dx -= 1;
+  if (keys['ArrowRight'] || keys['d'] || keys['D']) dx += 1;
+  if (keys['ArrowUp']    || keys['w'] || keys['W']) dy -= 1;
+  if (keys['ArrowDown']  || keys['s'] || keys['S']) dy += 1;
+  if (dx && dy) { dx *= 0.707; dy *= 0.707; }
+
+  const moving = dx !== 0 || dy !== 0;
+
+  player.x += dx * getPlayerSpeed() * dt;
+  player.y += dy * getPlayerSpeed() * dt;
+
+  if (dx !== 0) player.facing = dx > 0 ? 1 : -1;
+  if (moving) player.walkFrame = (player.walkFrame + dt * 3) % 1;
+  player.tailAngle += dt * (moving ? 4 : 1.5);
+  sfxStep(dt, moving);
+
+  // Blink animation
+  player.blinkTimer -= dt;
+  if (player.blinkTimer <= 0) {
+    if (player.isBlinking) {
+      player.isBlinking = false;
+      player.blinkTimer = 2 + Math.random() * 3;
+    } else {
+      player.isBlinking = true;
+      player.blinkTimer = 0.12;
+    }
+  }
+
+  // ── Power-up tick ──
+  if (activePowerup) {
+    activePowerup.timer -= dt;
+    if (activePowerup.timer <= 0) {
+      activePowerup = null;
+      message = 'Power-up expired!'; msgTimer = 1.2;
+    }
+  }
+
+  // ── Power-up spawn timer ──
+  if (!powerupPickup && !caught) {
+    powerupSpawnTimer -= dt;
+    if (powerupSpawnTimer <= 0) spawnPowerup();
+  }
+  if (powerupPickup) {
+    powerupPickup.wobble += dt;
+    powerupPickup.lifetime -= dt;
+    if (powerupPickup.lifetime <= 0) {
+      powerupPickup = null;
+      powerupSpawnTimer = 8 + Math.random() * 6;
+    }
+    // Cat collects it — re-check null in case it just expired above
+    if (powerupPickup && dist(player, powerupPickup) < 30) {
+      if (powerupPickup.type.id === 'freeze') sfxFreeze();
+      spawnParticles(powerupPickup.x, powerupPickup.y, 22, powerupPickup.type.color,
+        { minSpd: 60, maxSpd: 180, decay: 0.9, size: 3, sizeVar: 3 });
+      activatePowerup(powerupPickup.type);
+    }
+  }
+
+  updateParticles(dt);
+  updateTrail(dt);
+  tickShake(dt);
+
+  // Level timer (for time bonus)
+  if (!netDropped && !caught) levelTimer += dt;
+
+  // Animated score counter
+  if (displayScore < score) {
+    displayScore = Math.min(score, displayScore + Math.ceil((score - displayScore) * 0.15 + 1));
+  }
+  if (scoreBump > 0) scoreBump -= dt;
+
+  // Cat–peg collision — cat can't walk through pegs
+  for (const peg of PEGS) {
+    const PEG_R = 14;
+    const dx = player.x - peg.x;
+    const dy = player.y - peg.y;
+    const d  = Math.hypot(dx, dy);
+    const minD = player.radius * 0.6 + PEG_R;
+    if (d < minD && d > 0) {
+      player.x = peg.x + (dx / d) * minD;
+      player.y = peg.y + (dy / d) * minD;
+    }
+  }
+
+  const pr = player.radius + 10;
+  player.x = Math.max(pr, Math.min(canvas.width  - pr, player.x));
+  player.y = Math.max(pr + 50, Math.min(canvas.height - pr, player.y));
+
+  // Peg connection — hook 1→…→N then return to peg 1 to close the loop
+  if (!netDropped) {
+    if (connectedPegs.length < PEGS.length) {
+      const nextPegIdx = connectedPegs.length;
+      if (dist(player, PEGS[nextPegIdx]) < getPegSnap()) {
+        connectedPegs.push(nextPegIdx);
+        sfxPegHook(connectedPegs.length - 1);
+        const hp = PEGS[nextPegIdx];
+        spawnParticles(hp.x, hp.y, 14, '#40e0ff',
+          { minSpd: 50, maxSpd: 140, decay: 1.2, size: 2, sizeVar: 2 });
+        const remaining = PEGS.length - connectedPegs.length;
+        message  = remaining > 0
+          ? `Peg ${connectedPegs.length} hooked! → Go to peg ${connectedPegs.length + 1}`
+          : '🪢 Now go back to peg 1 to close the loop!';
+        msgTimer = 2.5;
+      }
+    } else {
+      // All pegs hooked — return to peg 1 to close
+      if (dist(player, PEGS[0]) < getPegSnap()) {
+        netDropped = true;
+        const poly = PEGS;
+        const allInside = mice.every(m => pointInPoly(m.x, m.y, poly));
+        if (!allInside) {
+          lives = Math.max(0, lives - 1);
+          firstAttempt = false;
+          sfxMiss();
+          screenShake(8, 0.5);
+          spawnParticles(player.x, player.y, 18, '#ff4040',
+            { minSpd: 40, maxSpd: 120, decay: 1.1, size: 2, sizeVar: 3 });
+          message = lives > 0 ? `😿 Missed! ${lives} ❤️ left — try again` : '💀 No lives left!';
+          msgTimer = 2.5;
+          if (lives <= 0) {
+            setTimeout(() => { running = false; showGameOver(); }, 2600);
+          } else {
+            setTimeout(() => { resetLevel(); message = 'Hook peg 1 first!'; msgTimer = 2; }, 2600);
+          }
+        } else {
+          message = '🪢 Loop closed! Net dropping…';
+          msgTimer = 2.5;
+          sfxLoopClosed();
+          screenShake(4, 0.25);
+          PEGS.forEach(p => spawnParticles(p.x, p.y, 10, '#f0c040',
+            { minSpd: 40, maxSpd: 100, decay: 1.0, size: 2, sizeVar: 2 }));
+        }
+      }
+    }
+  }
+
+  if (netDropped && netAlpha < 1) netAlpha = Math.min(1, netAlpha + dt * 2);
+
+  // Catch check — all mice must be inside
+  if (netDropped && netAlpha > 0.8 && !caught) {
+    const poly = connectedPegs.map(i => PEGS[i]);
+    mice.forEach(m => {
+      if (!m.caught && pointInPoly(m.x, m.y, poly)) m.caught = true;
+    });
+    if (mice.every(m => m.caught)) {
+      caught = true;
+      sfxCatch();
+      screenShake(6, 0.4);
+      mice.forEach(m => spawnParticles(m.x, m.y, 30, '#80ff80',
+        { minSpd: 60, maxSpd: 200, decay: 0.7, size: 3, sizeVar: 3, gravity: 80 }));
+      spawnParticles(canvas.width/2, canvas.height/2, 20, '#f0c040',
+        { minSpd: 30, maxSpd: 180, decay: 0.6, size: 2, sizeVar: 4, gravity: 60 });
+      // Base points
+      const basePoints = 100 * mice.length;
+      // Time bonus: full bonus under 15s, scaling down to 0 at 60s
+      const timeBonus = Math.max(0, Math.floor((1 - Math.min(levelTimer, 60) / 60) * 150));
+      // First-attempt accuracy bonus
+      const accuracyBonus = firstAttempt ? 50 : 0;
+      const total = basePoints + timeBonus + accuracyBonus;
+      score += total;
+      if (score > highScore) highScore = score;
+      scoreBump = 0.6;
+      let breakdown = `+${basePoints}`;
+      if (timeBonus > 0) breakdown += ` +${timeBonus}⏱`;
+      if (accuracyBonus > 0) breakdown += ` +${accuracyBonus}🎯`;
+      if (currentLevel < LEVEL_DATA.length - 1) {
+        setTimeout(sfxLevelUp, 600);
+        message = `🎉 ${breakdown} = ${total}pts! → ${LEVEL_DATA[currentLevel + 1].label}`;
+      } else {
+        message = `🎉 ${breakdown} = ${total}pts! You beat all levels!`;
+      }
+      msgTimer = 3.5;
+    }
+  }
+
+  // Cheese update
+  if (cheeseActive()) {
+    if (!cheese) {
+      // Spawn cheese periodically
+      if (!cheese) spawnCheese();
+    } else {
+      cheese.timer -= dt;
+      cheese.wobble += dt;
+      if (cheese.timer <= 0) cheese = null;
+    }
+  }
+
+  // Mouse movement
+  mice.forEach(m => {
+    if (m.caught) return;
+    if (isFrozen()) {
+      // Frozen — only animate tail, no movement
+      m.tailAngle += dt * 1.5;
+      return;
+    }
+
+    // ── Cat fear — flee directly away from the player ──
+    const CAT_FEAR_RADIUS = 160;  // px — how close cat must be to scare mouse
+    const fdx = m.x - player.x;
+    const fdy = m.y - player.y;
+    const fd  = Math.hypot(fdx, fdy);
+    if (fd < CAT_FEAR_RADIUS && fd > 0) {
+      // Strength increases sharply as cat gets closer
+      const strength = (1 - fd / CAT_FEAR_RADIUS) * 520;
+      m.vx += (fdx / fd) * strength * dt;
+      m.vy += (fdy / fd) * strength * dt;
+      // Cap speed so it doesn't get absurdly fast
+      const baseSpd = (90 + Math.random() * 40) * LEVEL_DATA[currentLevel].mouseSpeed;
+      const maxSpd  = baseSpd * 2.2;
+      const curSpd  = Math.hypot(m.vx, m.vy);
+      if (curSpd > maxSpd) { m.vx = (m.vx / curSpd) * maxSpd; m.vy = (m.vy / curSpd) * maxSpd; }
+      // Reset wander so it doesn't immediately override the flee direction
+      m.wanderTimer = 0.8;
+    }
+
+    // ── Cheese attraction — mouse steers toward cheese if active and nearby ──
+    if (cheese) {
+      const cdx = cheese.x - m.x;
+      const cdy = cheese.y - m.y;
+      const cd = Math.hypot(cdx, cdy);
+      if (cd < 200) {
+        const pull = 0.04;
+        m.vx += (cdx / cd) * pull * m.vx * dt * 60;
+        m.vy += (cdy / cd) * pull * m.vy * dt * 60;
+        // Eat cheese when close
+        if (cd < 25) { cheese = null; setTimeout(spawnCheese, 3000 + Math.random() * 3000); }
+      }
+    }
+
+    m.x += m.vx * dt;
+    m.y += m.vy * dt;
+    if (m.vx !== 0) m.facing = m.vx > 0 ? 1 : -1;
+
+    // ── Rope collision — mouse bounces off laid rope segments ──
+    collideMiceWithRope(m);
+
+    // Tick down escape cooldown
+    if (m.escapeCooldown > 0) m.escapeCooldown -= dt;
+
+    // Check hole escapes (level 2+)
+    if (holesActive() && m.escapeCooldown <= 0) {
+      for (const hole of HOLES) {
+        if (Math.hypot(m.x - hole.x, m.y - hole.y) < 20) {
+          // Teleport to a random other hole
+          const others = HOLES.filter(h => h !== hole);
+          const dest = others[Math.floor(Math.random() * others.length)];
+          m.x = dest.x + (Math.random() - 0.5) * 20;
+          m.y = dest.y + (Math.random() - 0.5) * 20;
+          const a = Math.random() * Math.PI * 2;
+          const s = (55 + Math.random() * 60) * LEVEL_DATA[currentLevel].mouseSpeed;
+          m.vx = Math.cos(a) * s;
+          m.vy = Math.sin(a) * s;
+          m.escapeCooldown = 2.0;
+          sfxHoleEscape();
+          screenShake(5, 0.35);
+          spawnParticles(hole.x, hole.y, 16, '#ff8800',
+            { minSpd: 30, maxSpd: 100, decay: 1.3, size: 2, sizeVar: 2 });
+          lives = Math.max(0, lives - 1);
+          message = lives > 0 ? `🕳️ Mouse escaped! ${lives} ❤️ left` : '💀 No lives left!';
+          msgTimer = 2;
+          if (lives <= 0) {
+            running = false;
+            setTimeout(() => showGameOver(), 1500);
+          }
+          break;
+        }
+      }
+    }
+
+    if (m.x < MOUSE_ZONE.x1 + 20) { m.x = MOUSE_ZONE.x1 + 20; m.vx =  Math.abs(m.vx); }
+    if (m.x > MOUSE_ZONE.x2 - 20) { m.x = MOUSE_ZONE.x2 - 20; m.vx = -Math.abs(m.vx); }
+    if (m.y < MOUSE_ZONE.y1 + 20) { m.y = MOUSE_ZONE.y1 + 20; m.vy =  Math.abs(m.vy); }
+    if (m.y > MOUSE_ZONE.y2 - 20) { m.y = MOUSE_ZONE.y2 - 20; m.vy = -Math.abs(m.vy); }
+    m.wanderTimer -= dt;
+    if (m.wanderTimer <= 0) {
+      m.wanderTimer = 1.5 + Math.random() * 2;
+      const a = Math.random() * Math.PI * 2;
+      const s = (55 + Math.random() * 60) * LEVEL_DATA[currentLevel].mouseSpeed;
+      m.vx = Math.cos(a) * s;
+      m.vy = Math.sin(a) * s;
+    }
+    m.tailAngle += dt * 4;
+  });
+
+  if (msgTimer > 0) msgTimer -= dt;
+
+  if (caught && msgTimer <= 0) {
+    if (currentLevel < LEVEL_DATA.length - 1) {
+      currentLevel++;
+      resetLevel();
+      updateMusicTempo();
+      message  = `${LEVEL_DATA[currentLevel].label} — Hook peg 1 first!`;
+      msgTimer = 2.5;
+    } else {
+      showWinScreen();
+    }
+  }
+}
+
+// ── Draw ──────────────────────────────────────────────────────────────
+function draw() {
+  ctx.save();
+  applyShake();
+  drawBackground();
+  drawTrail();
+  HOLES.forEach(drawHole);
+  drawCheese();
+  drawPowerupPickup();
+  drawNet();
+  drawRope();
+  PEGS.forEach((peg, i) => {
+    const loopPhase = connectedPegs.length === PEGS.length && !netDropped;
+    const isNext      = loopPhase ? i === 0 : (!netDropped && i === connectedPegs.length);
+    const isConnected = connectedPegs.includes(i);
+    drawPeg(peg, isNext, isConnected);
+  });
+  mice.forEach(m => drawMouse(m));
+
+  // Player cat
+  drawCat(player.x, player.y, player.facing, player.walkFrame,
+          player.tailAngle, player.isBlinking);
+
+  // Snap ring when close to target peg
+  if (!netDropped) {
+    const targetPeg = connectedPegs.length < PEGS.length ? PEGS[connectedPegs.length] : PEGS[0];
+    const d = dist(player, targetPeg);
+    if (d < getPegSnap() * 1.5) {
+      const alpha = 1 - (d / (getPegSnap() * 1.5));
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, player.radius + 10, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(64,224,255,${alpha})`;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
+  }
+
+  drawParticles();
+  drawActivePowerup();
+  drawMessage();
+  ctx.restore();  // undo shake translate
+
+  // ── Vignette ──
+  const vig = ctx.createRadialGradient(
+    canvas.width/2, canvas.height/2, canvas.height * 0.3,
+    canvas.width/2, canvas.height/2, canvas.height * 0.75);
+  vig.addColorStop(0, 'rgba(0,0,0,0)');
+  vig.addColorStop(1, 'rgba(0,0,0,0.45)');
+  ctx.fillStyle = vig;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // ── Freeze tint ──
+  if (activePowerup?.id === 'freeze') {
+    const frost = 0.08 + 0.04 * Math.sin(Date.now() * 0.004);
+    ctx.fillStyle = `rgba(100,180,255,${frost})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  // ── Speed boost glow around cat ──
+  if (activePowerup?.id === 'speed') {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, 42, 0, Math.PI * 2);
+    const spGlow = ctx.createRadialGradient(player.x, player.y, 10, player.x, player.y, 42);
+    spGlow.addColorStop(0, 'rgba(64,224,255,0.18)');
+    spGlow.addColorStop(1, 'rgba(64,224,255,0)');
+    ctx.fillStyle = spGlow;
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // ── Big net glow around pegs ──
+  if (activePowerup?.id === 'bignet') {
+    PEGS.forEach(p => {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, getPegSnap(), 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(180,100,255,0.12)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 6]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+    });
+  }
+
+  // HUD hint (drawn outside shake so it stays stable)
+  ctx.fillStyle = '#333';
+  ctx.font = '12px Courier New';
+  ctx.textAlign = 'center';
+  const twoMiceNote = LEVEL_DATA[currentLevel].twoMice ? '  •  Catch BOTH mice!' : '';
+  ctx.fillText(`Arrow Keys / WASD  •  Hook ${PEGS.length} pegs in order → back to 1${twoMiceNote}`, canvas.width / 2, canvas.height - 12);
+}
+
+// ── Game loop ─────────────────────────────────────────────────────────
+function loop(timestamp) {
+  if (!running) return;
+  const dt = Math.min((timestamp - lastTime) / 1000, 0.05);
+  lastTime = timestamp;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// ── Game over ─────────────────────────────────────────────────────────
+// ── Win Screen ────────────────────────────────────────────────────────
+function showWinScreen() {
+  running = false;
+  stopMusic();
+  [523,659,784,1047,1319].forEach((f,i) => {
+    playTone({ freq:f, type:'sine', attack:0.01, sustain:0.15, release:0.4, gain:0.28, when:i*0.12 });
+  });
+  const finalScore = score;
+  const isHigh = finalScore >= highScore;
+  if (isHigh) highScore = finalScore;
+  let winT = 0, winRunning = true, winLast = performance.now();
+
+  function winLoop(ts) {
+    if (!winRunning) return;
+    const wdt = Math.min((ts - winLast) / 1000, 0.05);
+    winLast = ts; winT += wdt;
+    const cx = canvas.width / 2;
+    draw();
+    ctx.fillStyle = `rgba(5,5,20,${Math.min(0.9, winT * 1.5)})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (winT < 3) {
+      spawnParticles(100 + Math.random()*500, 200 + Math.random()*400, 2,
+        ['#f0c040','#80ff80','#40e0ff','#ff80ff'][Math.floor(Math.random()*4)],
+        { minSpd:40, maxSpd:160, decay:0.8, size:2, sizeVar:3, gravity:40 });
+    }
+    updateParticles(wdt);
+    drawParticles();
+    if (winT > 0.4) {
+      const r = Math.min(1, (winT-0.4)*2);
+      ctx.save(); ctx.globalAlpha = r; ctx.textAlign = 'center';
+      ctx.font = 'bold 48px Courier New'; ctx.fillStyle = '#f0c040';
+      ctx.shadowBlur = 24; ctx.shadowColor = '#f0c04088';
+      ctx.fillText('YOU WIN! 🎉', cx, 200 + Math.sin(winT*2.5)*4);
+      ctx.shadowBlur = 0;
+      ctx.font = '18px Courier New'; ctx.fillStyle = '#aaa';
+      ctx.fillText('All 8 levels cleared!', cx, 240);
+      ctx.fillStyle='rgba(255,255,255,0.04)';
+      ctx.beginPath(); ctx.roundRect(cx-150,268,300,140,10); ctx.fill();
+      ctx.strokeStyle='rgba(255,255,255,0.08)'; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.roundRect(cx-150,268,300,140,10); ctx.stroke();
+      ctx.fillStyle='#888'; ctx.font='13px Courier New'; ctx.fillText('FINAL SCORE',cx,296);
+      ctx.fillStyle='#f0c040'; ctx.font='bold 52px Courier New';
+      ctx.shadowBlur=14; ctx.shadowColor='#f0c04066';
+      ctx.fillText(finalScore,cx,348); ctx.shadowBlur=0;
+      if (isHigh && Math.sin(winT*6)>0) {
+        ctx.fillStyle='#40ffcc'; ctx.font='bold 13px Courier New';
+        ctx.fillText('★ NEW HIGH SCORE ★',cx,372);
+      }
+      ctx.fillStyle='#666'; ctx.font='12px Courier New';
+      ctx.fillText(`Mice caught: ${Math.floor(finalScore/100)}`,cx,394);
+      ctx.restore();
+      if (winT > 1.6) {
+        const ba=Math.min(1,(winT-1.6)*3), bp=1+Math.sin(winT*4)*0.03;
+        ctx.save(); ctx.globalAlpha=ba; ctx.translate(cx,470); ctx.scale(bp,bp);
+        ctx.beginPath(); ctx.roundRect(-110,-22,220,44,8);
+        ctx.fillStyle='#f0c040'; ctx.shadowBlur=18; ctx.shadowColor='#f0c04088';
+        ctx.fill(); ctx.shadowBlur=0;
+        ctx.fillStyle='#000'; ctx.font='bold 15px Courier New';
+        ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText('▶  PLAY AGAIN',0,0); ctx.textBaseline='alphabetic'; ctx.restore();
+      }
+      if (winT > 1.8) {
+        ctx.fillStyle=`rgba(80,80,80,${Math.min(1,(winT-1.8)*2)})`;
+        ctx.font='11px Courier New'; ctx.textAlign='center';
+        ctx.fillText('by Lil — on EZ-AZ.net',cx,canvas.height-18);
+      }
+    }
+    requestAnimationFrame(winLoop);
+  }
+
+  function onWinClick(e) {
+    const rect = canvas.getBoundingClientRect();
+    const my = e.clientY - rect.top;
+    if (winT > 1.6 && my > 448 && my < 492) {
+      winRunning = false;
+      canvas.removeEventListener('click', onWinClick);
+      score=0; displayScore=0; lives=3; currentLevel=0; scoreBump=0; gameOverFired=false;
+      resetLevel(); cheese=null;
+      message='Welcome back! Hook peg 1!'; msgTimer=2.5;
+      running=true; lastTime=performance.now();
+      startMusic(); requestAnimationFrame(loop);
+    }
+  }
+  canvas.addEventListener('click', onWinClick);
+  requestAnimationFrame(winLoop);
+}
+
+// ── Game Over Screen ──────────────────────────────────────────────────
+let goAnimT   = 0;      // time since game over started
+let goRunning = false;  // game over animation loop running
+const isNewHigh = () => score > 0 && score >= highScore;
+
+function drawGameOver() {
+  const t = goAnimT;
+  const cx = canvas.width / 2;
+
+  // Dark overlay fade in
+  const fadeAlpha = Math.min(1, t * 1.5) * 0.92;
+  ctx.fillStyle = `rgba(5,5,15,${fadeAlpha})`;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  if (t < 0.3) return; // let fade settle before drawing text
+
+  const reveal = Math.min(1, (t - 0.3) * 2);
+
+  // ── Skull / cat sad face ──
+  ctx.save();
+  const catY    = 180;
+  const bounce  = Math.sin(t * 2.5) * (t < 1.5 ? 6 * (1 - t / 1.5) : 0);
+  const catScale = 0.5 + 0.5 * Math.min(1, (t - 0.3) * 3);
+  ctx.translate(cx, catY + bounce);
+  ctx.scale(catScale, catScale);
+  ctx.globalAlpha = reveal;
+
+  // Sad cat body
+  ctx.beginPath();
+  ctx.ellipse(0, 10, 34, 26, 0, 0, Math.PI * 2);
+  ctx.fillStyle = '#c8a030';
+  ctx.fill();
+  ctx.strokeStyle = '#8a6010'; ctx.lineWidth = 2; ctx.stroke();
+
+  // Head
+  ctx.beginPath();
+  ctx.arc(0, -14, 28, 0, Math.PI * 2);
+  ctx.fillStyle = '#f0c040'; ctx.fill(); ctx.stroke();
+
+  // Sad ears (drooping)
+  function sadEar(ex, ey, tilt) {
+    ctx.save(); ctx.translate(ex, ey); ctx.rotate(tilt);
+    ctx.beginPath();
+    ctx.moveTo(-8, 0); ctx.lineTo(8, 0); ctx.lineTo(0, -14);
+    ctx.closePath();
+    ctx.fillStyle = '#f0c040'; ctx.fill();
+    ctx.strokeStyle = '#8a6010'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-4, -1); ctx.lineTo(4, -1); ctx.lineTo(0, -9);
+    ctx.closePath(); ctx.fillStyle = '#ffaabb'; ctx.fill();
+    ctx.restore();
+  }
+  sadEar(-16, -36, -0.55);  // left ear droops more
+  sadEar( 16, -36,  0.55);
+
+  // Sad X eyes
+  ctx.strokeStyle = '#553300'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  [[-12, -16], [12, -16]].forEach(([ex, ey]) => {
+    ctx.beginPath(); ctx.moveTo(ex-5,ey-5); ctx.lineTo(ex+5,ey+5); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(ex+5,ey-5); ctx.lineTo(ex-5,ey+5); ctx.stroke();
+  });
+
+  // Sad mouth
+  ctx.beginPath();
+  ctx.moveTo(-10, -2);
+  ctx.quadraticCurveTo(0, -10, 10, -2);
+  ctx.strokeStyle = '#884422'; ctx.lineWidth = 2.5; ctx.stroke();
+
+  // Tears
+  const tearDrop = (tx, ty) => {
+    ctx.beginPath();
+    ctx.arc(tx, ty + Math.sin(t*3)*4, 4, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(100,180,255,0.8)'; ctx.fill();
+  };
+  if (t > 0.8) { tearDrop(-14, -4 + (t-0.8)*30 % 30); tearDrop(14, -4 + (t-1.1)*30 % 30); }
+
+  ctx.restore();
+
+  // ── GAME OVER text ──
+  ctx.save();
+  ctx.globalAlpha = reveal;
+  ctx.textAlign = 'center';
+  const wobble = Math.sin(t * 3) * (t < 1 ? 4 : 1.5);
+  ctx.font = 'bold 42px Courier New';
+  ctx.fillStyle = '#e03030';
+  ctx.shadowBlur = 20; ctx.shadowColor = '#e0303080';
+  ctx.fillText('GAME OVER', cx, 310 + wobble);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+
+  // ── Stats ──
+  if (t > 0.8) {
+    const statsReveal = Math.min(1, (t - 0.8) * 2);
+    ctx.save();
+    ctx.globalAlpha = statsReveal;
+    ctx.textAlign = 'center';
+
+    // Score box
+    ctx.fillStyle = 'rgba(255,255,255,0.04)';
+    ctx.beginPath();
+    ctx.roundRect(cx - 160, 330, 320, 160, 10);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.fillStyle = '#aaa';
+    ctx.font = '14px Courier New';
+    ctx.fillText('FINAL SCORE', cx, 360);
+
+    ctx.fillStyle = '#f0c040';
+    ctx.font = 'bold 48px Courier New';
+    ctx.shadowBlur = 16; ctx.shadowColor = '#f0c04066';
+    ctx.fillText(score, cx, 412);
+    ctx.shadowBlur = 0;
+
+    // New high score flash
+    if (isNewHigh() && Math.sin(t * 6) > 0) {
+      ctx.fillStyle = '#40ffcc';
+      ctx.font = 'bold 14px Courier New';
+      ctx.fillText('★ NEW HIGH SCORE ★', cx, 432);
+    } else if (!isNewHigh() && highScore > 0) {
+      ctx.fillStyle = '#555';
+      ctx.font = '12px Courier New';
+      ctx.fillText(`Best: ${highScore}`, cx, 432);
+    }
+
+    ctx.fillStyle = '#888';
+    ctx.font = '13px Courier New';
+    ctx.fillText(`Reached: ${LEVEL_DATA[currentLevel].label}`, cx, 462);
+    ctx.fillText(`Mice caught: ${Math.floor(score / 100)}`, cx, 480);
+    ctx.restore();
+  }
+
+  // ── Play Again button (drawn on canvas) ──
+  if (t > 1.4) {
+    const btnReveal = Math.min(1, (t - 1.4) * 3);
+    const btnPulse  = 1 + Math.sin(t * 4) * 0.04;
+    ctx.save();
+    ctx.globalAlpha = btnReveal;
+    ctx.translate(cx, 540);
+    ctx.scale(btnPulse, btnPulse);
+    ctx.beginPath();
+    ctx.roundRect(-100, -22, 200, 44, 8);
+    ctx.fillStyle = '#f0c040';
+    ctx.shadowBlur = 20; ctx.shadowColor = '#f0c04088';
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#000';
+    ctx.font = 'bold 16px Courier New';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('▶  PLAY AGAIN', 0, 0);
+    ctx.textBaseline = 'alphabetic';
+    ctx.restore();
+  }
+
+  // ── Byline ──
+  if (t > 1.8) {
+    ctx.fillStyle = `rgba(80,80,80,${Math.min(1,(t-1.8)*2)})`;
+    ctx.font = '11px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText('by Lil — on EZ-AZ.net', cx, canvas.height - 18);
+  }
+}
+
+function showGameOver() {
+  if (gameOverFired) return;
+  gameOverFired = true;
+  sfxGameOver();
+  stopMusic();
+  running   = false;
+  goAnimT   = 0;
+  goRunning = true;
+
+  // Click anywhere on canvas to restart
+  function onRestart(e) {
+    const rect = canvas.getBoundingClientRect();
+    const my = e.clientY - rect.top;
+    // Only if Play Again button area (~t > 1.4, y 518-562)
+    if (goAnimT > 1.4 && my > 518 && my < 562) {
+      canvas.removeEventListener('click', onRestart);
+      goRunning = false;
+      // Full reset
+      score = 0; displayScore = 0; lives = 3;
+      currentLevel = 0; scoreBump = 0;
+      resetLevel();
+      cheese = null;
+      message  = 'Hook peg 1 first — then all pegs, back to 1!';
+      msgTimer = 2.5;
+      running  = true;
+      lastTime = performance.now();
+      startMusic();
+      requestAnimationFrame(loop);
+    }
+  }
+  canvas.addEventListener('click', onRestart);
+
+  let goLast = performance.now();
+  function goLoop(ts) {
+    if (!goRunning) return;
+    const goDt = Math.min((ts - goLast) / 1000, 0.05);
+    goLast = ts;
+    goAnimT += goDt;
+    draw();          // draw the game world underneath
+    drawGameOver();  // overlay the game over screen
+    requestAnimationFrame(goLoop);
+  }
+  requestAnimationFrame(goLoop);
+}
+
+// ── Start ─────────────────────────────────────────────────────────────
+startBtn.addEventListener('click', () => {
+  overlay.classList.add('hidden');
+  score = 0; displayScore = 0; lives = 3; currentLevel = 0; scoreBump = 0; gameOverFired = false;
+  resetLevel();
+  cheese = null;
+  message  = 'Hook peg 1 first — then all pegs, back to 1!';
+  msgTimer = 2.5;
+  running  = true;
+  lastTime = performance.now();
+  startMusic();
+  requestAnimationFrame(loop);
+});
+
+// Static preview
+drawBackground();
+PEGS.forEach(p => drawPeg(p, false, false));
+drawCat(350, 200, 1, 0, 0, false);
+mice.forEach(m => drawMouse(m));
+</script>
+</body>
+</html>
