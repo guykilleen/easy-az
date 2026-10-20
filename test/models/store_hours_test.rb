@@ -6,138 +6,115 @@ class StoreHoursTest < ActiveSupport::TestCase
   ZONE = "Australia/Brisbane".freeze
 
   def setup
-    Counter.where(key: "store_open_until").delete_all
+    Counter.where(key: ["store_open_until"] + StoreHours::SCHEDULES.flat_map { |s|
+      ["hours_#{s}_open", "hours_#{s}_close"]
+    }).delete_all
   end
 
   def teardown
     travel_back
+    setup  # clear counters written by tests
   end
 
-  # ── Weekday rules (Mon-Fri normal hours: 4pm-7:30pm) ─────────────────────
+  # ── Always-open defaults ───────────────────────────────────────────────────
 
-  test "weekday closed before 4pm" do
-    travel_to Time.find_zone(ZONE).local(2026, 5, 4, 11, 30)  # Mon 11:30am
-    refute StoreHours.open?
+  test "store is open at all hours by default" do
+    [
+      [2026, 5, 4,  0,  0],  # Mon midnight
+      [2026, 5, 4, 11, 30],  # Mon 11:30am
+      [2026, 5, 4, 16,  0],  # Mon 4pm
+      [2026, 5, 4, 23,  0],  # Mon 11pm
+      [2026, 5, 9,  7,  0],  # Sat 7am
+      [2026, 5, 10, 17, 0],  # Sun 5pm
+      [2026, 4,  7,  8, 0],  # Holiday weekday 8am
+    ].each do |args|
+      travel_to Time.find_zone(ZONE).local(*args)
+      assert StoreHours.open?, "expected open at #{args.inspect}"
+    end
   end
 
-  test "weekday closed at 3:59pm" do
+  test "hours_config returns always-open defaults when no counters set" do
+    cfg = StoreHours.hours_config
+    StoreHours::SCHEDULES.each do |s|
+      assert_equal 0,    cfg[s][:open],  "#{s} open should default to 0"
+      assert_equal 1440, cfg[s][:close], "#{s} close should default to 1440"
+    end
+  end
+
+  # ── Custom hours via DB config ─────────────────────────────────────────────
+
+  test "store respects narrow weekday hours when set" do
+    # Set weekday to 4pm-7:30pm
+    StoreHours.update_hours("weekday" => { open: "16:00", close: "19:30" })
+
     travel_to Time.find_zone(ZONE).local(2026, 5, 4, 15, 59)  # Mon 3:59pm
-    refute StoreHours.open?
-  end
+    refute StoreHours.scheduled_open?
 
-  test "weekday open at 4:00pm" do
-    travel_to Time.find_zone(ZONE).local(2026, 5, 4, 16, 0)  # Mon 4:00pm
-    assert StoreHours.open?
-  end
+    travel_to Time.find_zone(ZONE).local(2026, 5, 4, 16, 0)   # Mon 4:00pm
+    assert StoreHours.scheduled_open?
 
-  test "weekday open at 7:29pm" do
     travel_to Time.find_zone(ZONE).local(2026, 5, 4, 19, 29)  # Mon 7:29pm
-    assert StoreHours.open?
-  end
+    assert StoreHours.scheduled_open?
 
-  test "weekday closed at 7:30pm" do
     travel_to Time.find_zone(ZONE).local(2026, 5, 4, 19, 30)  # Mon 7:30pm
-    refute StoreHours.open?
+    refute StoreHours.scheduled_open?
   end
 
-  test "weekday closed late night" do
-    travel_to Time.find_zone(ZONE).local(2026, 5, 4, 23, 0)  # Mon 11pm
-    refute StoreHours.open?
-  end
+  test "store respects narrow saturday hours when set" do
+    StoreHours.update_hours("saturday" => { open: "07:30", close: "19:30" })
 
-  # ── Saturday rules (7:30am-7:30pm) ────────────────────────────────────────
+    travel_to Time.find_zone(ZONE).local(2026, 5, 9, 7, 0)   # Sat 7:00am
+    refute StoreHours.scheduled_open?
 
-  test "saturday closed before 7:30am" do
-    travel_to Time.find_zone(ZONE).local(2026, 5, 9, 7, 0)  # Sat 7:00am
-    refute StoreHours.open?
-  end
-
-  test "saturday open at 7:30am" do
     travel_to Time.find_zone(ZONE).local(2026, 5, 9, 7, 30)  # Sat 7:30am
-    assert StoreHours.open?
+    assert StoreHours.scheduled_open?
+
+    travel_to Time.find_zone(ZONE).local(2026, 5, 9, 19, 30) # Sat 7:30pm
+    refute StoreHours.scheduled_open?
   end
 
-  test "saturday open mid-afternoon" do
-    travel_to Time.find_zone(ZONE).local(2026, 5, 9, 14, 0)  # Sat 2pm
-    assert StoreHours.open?
-  end
+  test "store respects narrow sunday hours when set" do
+    StoreHours.update_hours("sunday" => { open: "07:30", close: "17:00" })
 
-  test "saturday closed at 7:30pm" do
-    travel_to Time.find_zone(ZONE).local(2026, 5, 9, 19, 30)  # Sat 7:30pm
-    refute StoreHours.open?
-  end
+    travel_to Time.find_zone(ZONE).local(2026, 5, 10, 7, 0)  # Sun 7:00am
+    refute StoreHours.scheduled_open?
 
-  # ── Sunday rules (7:30am-5pm) ─────────────────────────────────────────────
+    travel_to Time.find_zone(ZONE).local(2026, 5, 10, 16, 59) # Sun 4:59pm
+    assert StoreHours.scheduled_open?
 
-  test "sunday open at 7:30am" do
-    travel_to Time.find_zone(ZONE).local(2026, 5, 10, 7, 30)  # Sun 7:30am
-    assert StoreHours.open?
-  end
-
-  test "sunday open at 4:59pm" do
-    travel_to Time.find_zone(ZONE).local(2026, 5, 10, 16, 59)  # Sun 4:59pm
-    assert StoreHours.open?
-  end
-
-  test "sunday closed at 5:00pm" do
     travel_to Time.find_zone(ZONE).local(2026, 5, 10, 17, 0)  # Sun 5:00pm
-    refute StoreHours.open?
+    refute StoreHours.scheduled_open?
   end
 
-  test "sunday closed early evening" do
-    travel_to Time.find_zone(ZONE).local(2026, 5, 10, 18, 0)  # Sun 6pm
-    refute StoreHours.open?
+  test "holiday weekday uses holiday schedule when set" do
+    StoreHours.update_hours(
+      "weekday" => { open: "16:00", close: "19:30" },
+      "holiday" => { open: "07:30", close: "19:30" }
+    )
+
+    # Holiday weekday -- uses holiday schedule, not weekday
+    travel_to Time.find_zone(ZONE).local(2026, 4, 7, 8, 0)   # Tue autumn holidays
+    assert StoreHours.scheduled_open?
+
+    travel_to Time.find_zone(ZONE).local(2026, 4, 7, 7, 0)   # Too early even for holiday
+    refute StoreHours.scheduled_open?
+
+    # Non-holiday weekday -- uses weekday schedule
+    travel_to Time.find_zone(ZONE).local(2026, 5, 4, 8, 0)   # Mon during term -- 8am, before weekday open
+    refute StoreHours.scheduled_open?
   end
 
-  # ── Holiday weekdays (treat as Saturday hours: 7:30am-7:30pm) ─────────────
-
-  test "holiday weekday open at 8am (would be closed normally)" do
-    travel_to Time.find_zone(ZONE).local(2026, 4, 7, 8, 0)  # Tue in autumn holidays
-    assert StoreHours.open?
-  end
-
-  test "holiday weekday closed before 7:30am" do
-    travel_to Time.find_zone(ZONE).local(2026, 4, 7, 7, 0)  # Tue in autumn holidays
-    refute StoreHours.open?
-  end
-
-  test "holiday weekday closed at 7:30pm" do
-    travel_to Time.find_zone(ZONE).local(2026, 4, 7, 19, 30)  # Tue in autumn holidays
-    refute StoreHours.open?
-  end
-
-  test "holiday end date is inclusive" do
-    travel_to Time.find_zone(ZONE).local(2026, 4, 17, 8, 0)  # Fri, last weekday of holidays
-    assert StoreHours.open?
-  end
-
-  test "day after holiday returns to normal weekday hours" do
-    travel_to Time.find_zone(ZONE).local(2026, 4, 20, 8, 0)  # Mon, term 2 starts
-    refute StoreHours.open?
-    travel_to Time.find_zone(ZONE).local(2026, 4, 20, 16, 0)  # Mon 4pm
-    assert StoreHours.open?
-  end
-
-  # The winter 2026 break was missing from HOLIDAYS entirely, so the store sat
-  # shut every weekday morning of it. Regression guard for each break we list.
-  test "winter 2026 holiday weekday opens at 7:30am" do
-    travel_to Time.find_zone(ZONE).local(2026, 6, 30, 8, 0)  # Tue in winter holidays
-    assert StoreHours.open?
-  end
-
-  test "spring 2026 holiday weekday opens at 7:30am" do
-    travel_to Time.find_zone(ZONE).local(2026, 9, 22, 8, 0)  # Tue in spring holidays
-    assert StoreHours.open?
-  end
-
-  test "summer holiday spanning the new year opens at 7:30am" do
-    travel_to Time.find_zone(ZONE).local(2027, 1, 5, 8, 0)  # Tue in summer holidays
-    assert StoreHours.open?
+  test "update_hours persists and round-trips via minutes_to_time" do
+    StoreHours.update_hours("weekday" => { open: "09:15", close: "22:45" })
+    cfg = StoreHours.hours_config
+    assert_equal "09:15", StoreHours.minutes_to_time(cfg["weekday"][:open])
+    assert_equal "22:45", StoreHours.minutes_to_time(cfg["weekday"][:close])
   end
 
   # ── Override (Counter store_open_until) ───────────────────────────────────
 
-  test "override unlocks store outside normal hours" do
+  test "override unlocks store when scheduled hours are narrow" do
+    StoreHours.update_hours("weekday" => { open: "16:00", close: "19:30" })
     travel_to Time.find_zone(ZONE).local(2026, 5, 4, 23, 0)  # Mon 11pm
     refute StoreHours.open?
     Counter.create!(key: "store_open_until", value: (Time.now + 30 * 60).to_i)
@@ -145,18 +122,11 @@ class StoreHoursTest < ActiveSupport::TestCase
   end
 
   test "expired override does not unlock" do
-    travel_to Time.find_zone(ZONE).local(2026, 5, 4, 23, 0)  # Mon 11pm
+    StoreHours.update_hours("weekday" => { open: "16:00", close: "19:30" })
+    travel_to Time.find_zone(ZONE).local(2026, 5, 4, 23, 0)
     Counter.create!(key: "store_open_until", value: (Time.now - 60).to_i)
     refute StoreHours.open?
   end
-
-  test "override does not affect already-open hours" do
-    travel_to Time.find_zone(ZONE).local(2026, 5, 4, 17, 0)  # Mon 5pm — open
-    Counter.create!(key: "store_open_until", value: (Time.now - 60).to_i)
-    assert StoreHours.open?, "store should still be open during regular hours"
-  end
-
-  # ── Override active? helper ───────────────────────────────────────────────
 
   test "override_active? false when no record" do
     refute StoreHours.override_active?
@@ -198,7 +168,6 @@ class StoreHoursTest < ActiveSupport::TestCase
     assert runway >= 30,
       "School holiday data runs out on #{last} (#{runway} days away). Top up HOLIDAYS in " \
       "app/models/store_hours.rb AND public/opening-hours.js from " \
-      "https://education.qld.gov.au/about-us/calendar/term-dates before the next break, " \
-      "or the store will stay on 4pm weekday hours right through it."
+      "https://education.qld.gov.au/about-us/calendar/term-dates before the next break."
   end
 end

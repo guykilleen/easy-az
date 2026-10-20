@@ -16,11 +16,17 @@ class StoreHoursEnforcementTest < ActionDispatch::IntegrationTest
   def setup
     RespectsStoreHours.enforce_in_test = true
     Counter.where(key: "store_open_until").delete_all
+    # Set weekday hours to 4pm-7:30pm so CLOSED_TIME (Mon 11pm) is actually
+    # closed and OPEN_TIME (Mon 5pm) is actually open.
+    StoreHours.update_hours("weekday" => { open: "16:00", close: "19:30" })
   end
 
   def teardown
     RespectsStoreHours.enforce_in_test = false
     travel_back
+    Counter.where(key: StoreHours::SCHEDULES.flat_map { |s|
+      ["hours_#{s}_open", "hours_#{s}_close"]
+    }).delete_all
   end
 
   def closed_clock!

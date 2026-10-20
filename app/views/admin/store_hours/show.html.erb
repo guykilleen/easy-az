@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EZ-AZ — Store Hours</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0a0a12; color: #fff; margin: 0; padding: 24px; max-width: 640px; }
+    h1 { color: #00ffc8; margin-top: 0; font-size: 22px; }
+    p.hint { color: #888; font-size: 13px; margin-top: -8px; margin-bottom: 24px; }
+    fieldset { border: 1px solid #333; border-radius: 8px; padding: 16px 20px; margin-bottom: 16px; }
+    legend { color: #ffd700; font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; padding: 0 6px; }
+    .row { display: flex; gap: 24px; align-items: center; }
+    label { color: #aaa; font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
+    input[type="time"] { background: #1a1a2e; border: 1px solid #333; border-radius: 6px; color: #fff; padding: 8px 12px; font-size: 15px; width: 130px; }
+    input[type="time"]:focus { outline: none; border-color: #00ffc8; }
+    .actions { margin-top: 24px; display: flex; gap: 12px; align-items: center; }
+    button { background: #00ffc8; color: #0a0a12; border: none; border-radius: 8px; padding: 10px 24px; font-size: 15px; font-weight: 700; cursor: pointer; }
+    button:hover { background: #00e6b3; }
+    a.logout { color: #888; font-size: 13px; text-decoration: none; }
+    a.logout:hover { color: #fff; }
+    .notice { background: rgba(0,255,200,0.1); border: 1px solid #00ffc8; color: #fff; padding: 10px 14px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; }
+    .always-open { color: #2ed573; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Store Hours</h1>
+  <p class="hint">All times are Brisbane time (no DST). Set both to 00:00 for always open.</p>
+
+  <% if notice.present? %>
+    <div class="notice"><%= notice %></div>
+  <% end %>
+
+  <%= form_with url: admin_store_hours_path, method: :patch, local: true do |f| %>
+    <% [
+      ["weekday",  "Weekday (Mon–Fri, school term)"],
+      ["saturday", "Saturday"],
+      ["sunday",   "Sunday"],
+      ["holiday",  "Holiday Weekday"]
+    ].each do |key, label| %>
+      <% open_min  = @config[key][:open] %>
+      <% close_min = @config[key][:close] %>
+      <% always_open = open_min == 0 && close_min == 1440 %>
+      <fieldset>
+        <legend><%= label %> <%= always_open ? "(always open)" : "" %></legend>
+        <div class="row">
+          <label>
+            Open
+            <input type="time" name="store_hours[<%= key %>][open]"
+                   value="<%= StoreHours.minutes_to_time(open_min) %>">
+          </label>
+          <label>
+            Close
+            <input type="time" name="store_hours[<%= key %>][close]"
+                   value="<%= StoreHours.minutes_to_time(close_min) %>">
+          </label>
+        </div>
+      </fieldset>
+    <% end %>
+
+    <div class="actions">
+      <button type="submit">Save hours</button>
+      <%= link_to "Log out", admin_logout_path, data: { turbo_method: :delete }, class: "logout" %>
+    </div>
+  <% end %>
+</body>
+</html>

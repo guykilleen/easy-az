@@ -2,12 +2,10 @@
 # store is open so the client redirect and the server enforcement don't
 # disagree. If you change the rules here, change the JS too.
 #
-# Normal hours (Brisbane / no DST):
-#   Mon-Fri  4:00pm  - 7:30pm
-#   Sat      7:30am - 7:30pm
-#   Sun      7:30am - 5:00pm
+# Hours are stored in the DB (Counter keys hours_*_open / hours_*_close,
+# minutes from midnight). Defaults are 0 / 1440 (always open). Use the
+# admin area at /admin/store_hours to change them.
 #
-# During school holidays, weekdays swap to Saturday hours.
 # An after-hours override is set via Counter("store_open_until") — used by the
 # Cipher unlock flow so kids who solve it can play after closing.
 class StoreHours
@@ -34,16 +32,45 @@ class StoreHours
     { from: "2027-12-11", to: "2028-01-23" }   # Summer 2027/28
   ].freeze
 
-  WEEKDAY_OPEN  = 16 * 60       # 4:00pm
-  WEEKEND_OPEN  = 7 * 60 + 30   # 7:30am
-  CLOSE_730PM   = 19 * 60 + 30  # 7:30pm
-  CLOSE_500PM   = 17 * 60       # 5:00pm
+  SCHEDULES = %w[weekday saturday sunday holiday].freeze
+
+  # Minutes from midnight stored in the DB per schedule.
+  # Missing keys fall back to always-open (0 / 1440).
+  def self.hours_config
+    keys = SCHEDULES.flat_map { |s| ["hours_#{s}_open", "hours_#{s}_close"] }
+    rows = Counter.where(key: keys).index_by(&:key)
+    SCHEDULES.each_with_object({}) do |s, h|
+      h[s] = {
+        open:  rows["hours_#{s}_open"]&.value  || 0,
+        close: rows["hours_#{s}_close"]&.value || 1440
+      }
+    end
+  end
+
+  # Write new hours from the admin form. `params` is a hash keyed by schedule
+  # name with :open and :close as "HH:MM" strings.
+  def self.update_hours(params)
+    SCHEDULES.each do |s|
+      next unless params[s]
+      Counter.find_or_create_by!(key: "hours_#{s}_open") .update!(value: time_to_minutes(params[s][:open]))
+      Counter.find_or_create_by!(key: "hours_#{s}_close").update!(value: time_to_minutes(params[s][:close]))
+    end
+  end
+
+  def self.time_to_minutes(str)
+    h, m = str.to_s.split(":").map(&:to_i)
+    h * 60 + m.to_i
+  end
+
+  def self.minutes_to_time(min)
+    format("%02d:%02d", min.to_i / 60, min.to_i % 60)
+  end
 
   def self.open?(at = Time.zone.now)
     override_active?(at) || scheduled_open?(at)
   end
 
-  # Open according to the published timetable, ignoring any override.
+  # Open according to the configured timetable, ignoring any override.
   def self.scheduled_open?(at = Time.zone.now)
     local   = at.in_time_zone(ZONE)
     minutes = local.hour * 60 + local.min
@@ -55,16 +82,14 @@ class StoreHours
   # runs between. Single source of truth for the rules -- open? and status both
   # go through here so they can't disagree.
   def self.window_for(at)
+    cfg   = hours_config
     local = at.in_time_zone(ZONE)
     case local.wday
-    when 0 then { schedule: "sunday",   open_min: WEEKEND_OPEN, close_min: CLOSE_500PM }
-    when 6 then { schedule: "saturday", open_min: WEEKEND_OPEN, close_min: CLOSE_730PM }
+    when 0 then { schedule: "sunday",   open_min: cfg["sunday"][:open],   close_min: cfg["sunday"][:close] }
+    when 6 then { schedule: "saturday", open_min: cfg["saturday"][:open], close_min: cfg["saturday"][:close] }
     else
-      if on_holiday?(local)
-        { schedule: "holiday", open_min: WEEKEND_OPEN, close_min: CLOSE_730PM }
-      else
-        { schedule: "weekday", open_min: WEEKDAY_OPEN, close_min: CLOSE_730PM }
-      end
+      schedule = on_holiday?(local) ? "holiday" : "weekday"
+      { schedule: schedule, open_min: cfg[schedule][:open], close_min: cfg[schedule][:close] }
     end
   end
 

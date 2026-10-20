@@ -5,12 +5,23 @@ class Api::StoreControllerTest < ActionDispatch::IntegrationTest
 
   ZONE = "Australia/Brisbane".freeze
 
+  HOUR_KEYS = StoreHours::SCHEDULES.flat_map { |s| ["hours_#{s}_open", "hours_#{s}_close"] }.freeze
+
   def setup
-    Counter.where(key: "store_open_until").delete_all
+    Counter.where(key: ["store_open_until"] + HOUR_KEYS).delete_all
+    # Pin to the original published schedule so assertions about
+    # specific open/close times and closed states remain meaningful.
+    StoreHours.update_hours(
+      "weekday"  => { open: "16:00", close: "19:30" },
+      "saturday" => { open: "07:30", close: "19:30" },
+      "sunday"   => { open: "07:30", close: "17:00" },
+      "holiday"  => { open: "07:30", close: "19:30" }
+    )
   end
 
   def teardown
     travel_back
+    Counter.where(key: HOUR_KEYS).delete_all
   end
 
   def body

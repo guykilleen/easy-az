@@ -80,6 +80,10 @@ Rails.application.routes.draw do
   get "/errors", to: "errors_dashboard#index"
 
   namespace :admin do
+    get    "login",  to: "sessions#new",     as: :login
+    delete "logout", to: "sessions#destroy", as: :logout
+    resource :store_hours, only: [:show, :update]
+
     resources :submissions, only: [:index, :show] do
       member do
         get  :preview
