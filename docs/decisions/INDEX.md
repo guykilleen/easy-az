@@ -29,7 +29,9 @@ that convention and don't have them yet; they pick it up if they're touched.
 | **Golden Goal & QR join** | 009 |
 | **Shared design system** | 011, 015 |
 | **TV / closed-screen resilience** | 012 |
-| **Store hours & opening times** | 012, 013 |
+| **Store hours & opening times** | 012, 013, 018 |
+| **Admin area & auth** | 018 |
+| **Deployment & infrastructure** | 019 |
 | **Leaderboards & scores** | 014, 015, 017 |
 | **Puzzle level generation** | 017 |
 
@@ -54,11 +56,13 @@ that convention and don't have them yet; they pick it up if they're touched.
 | 015 | The Wrapper Around a Game Is Shared Code, Not a Snippet | Accepted | 2026-07-26 |
 | 016 | On-Site Submission Form, Idea-Only Submissions, and a Hard Security Floor | Accepted | 2026-07-31 |
 | 017 | Chill Games Need a Score, and a Construction-Based Technique for Guaranteed-Solvable Grid Puzzles | Accepted | 2026-08-02 |
+| 018 | DB-Backed Store Hours and Admin Magic-Link Login | Accepted | 2026-10-21 |
+| 019 | Kamal Is the Sole Deployment System | Accepted | 2026-10-21 |
 
 ## Maintenance
 
 When adding a new ADR:
-1. Use the next number in sequence (currently next: **018**)
+1. Use the next number in sequence (currently next: **020**)
 2. Add `Triggers:` and `Topics:` near the top
 3. Add a row to the chronological table above
 4. Add the ADR number to relevant topic rows above
