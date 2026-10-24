@@ -1,120 +1,160 @@
 <!DOCTYPE html>
-<html lang="en">
+<!--
+  BALLOON POP -- by Lil
+  An EZ-AZ game. Built from docs/game-template.html.
+
+  Move the pin along the rail with the arrow keys, then drop it to pop the
+  rising balloons. Pop power-up balloons for freeze, speed and multi-pin.
+
+  Everything outside the three game sections (title screen, leaderboard,
+  pause, game over, trip back to the store) comes from /ez-az-shell.css
+  and /arcade-shell.js.
+
+  Slug: balloon-pop  (score sort: points, highest first)
+-->
+<html lang="en-AU">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Balloon Pop – by Lil</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Balloon Pop — EZ-AZ</title>
 
-    body {
-      background: #000;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      font-family: 'Courier New', monospace;
-      overflow: hidden;
-    }
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/ez-az-shell.css">
 
-    canvas { display: block; }
+<style>
+  /* SECTION 1 of 3 — the game's own look. */
+  :root { --ez-title-colour: #ff6ec7; }
 
-    .overlay {
-      position: fixed;
-      inset: 0;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      background: rgba(0,0,0,0.88);
-      z-index: 10;
-    }
-    .overlay.hidden { display: none; }
+  html, body {
+    margin: 0; height: 100%;
+    background: var(--ez-bg);
+    overflow: hidden;
+  }
 
-    .overlay h1 {
-      font-size: 3.5rem;
-      color: #ff6ec7;
-      text-shadow: 0 0 20px #ff6ec7, 0 0 50px #ff3aaa;
-      letter-spacing: 0.1em;
-      margin-bottom: 0.2em;
-    }
-    .overlay .subtitle {
-      color: #aaa;
-      font-size: 1rem;
-      margin-bottom: 0.4em;
-      letter-spacing: 0.2em;
-    }
-    .overlay .by {
-      color: #555;
-      font-size: 0.8rem;
-      margin-bottom: 2.5em;
-    }
-
-    .big-btn {
-      background: #ff6ec7;
-      color: #1a0010;
-      border: none;
-      padding: 0.75em 2.8em;
-      font-size: 1.3rem;
-      font-family: inherit;
-      font-weight: bold;
-      letter-spacing: 0.12em;
-      border-radius: 50px;
-      cursor: pointer;
-      box-shadow: 0 0 24px #ff6ec799;
-      transition: transform 0.1s, box-shadow 0.1s;
-    }
-    .big-btn:hover {
-      transform: scale(1.08);
-      box-shadow: 0 0 40px #ff6ec7cc;
-    }
-
-    .controls-hint {
-      margin-top: 2em;
-      color: #666;
-      font-size: 0.82rem;
-      text-align: center;
-      line-height: 2.2;
-    }
-    .controls-hint span {
-      color: #ff6ec7;
-      font-weight: bold;
-    }
-  </style>
+  #game {
+    display: block;
+    margin: 0 auto;
+    max-width: 100vw;
+    max-height: 100vh;
+  }
+</style>
 </head>
 <body>
 
-<div class="overlay" id="startScreen">
-  <h1>🎈 BALLOON POP</h1>
-  <div class="subtitle">AIM · DROP · POP</div>
-  <div class="by">by Lil &nbsp;·&nbsp; ez-az.net</div>
-  <button class="big-btn" id="startBtn">▶ &nbsp;PLAY</button>
-  <div class="controls-hint">
-    <span>← →</span> slide the pin left and right<br>
-    <span>↓</span> release the pin to pop a balloon<br>
-    Don't let the balloons reach the top!
+<!-- Title screen -->
+<div class="ezaz-title" id="titleScreen">
+  <div class="ezaz-title-name">BALLOON POP</div>
+  <div class="ezaz-title-tag">Line up the pin, drop it, pop the balloons!</div>
+
+  <p class="ezaz-hint">&larr; &rarr; move the pin &nbsp;|&nbsp; &darr; drop it &nbsp;|&nbsp; ESC to pause</p>
+
+  <button class="ezaz-btn-primary" id="startBtn">START</button>
+
+  <div class="ezaz-lb-wrap" id="titleLb"></div>
+</div>
+
+<!-- Game over. Name entry only appears if the score makes the board. -->
+<div class="ezaz-title hidden" id="overScreen">
+  <div class="ezaz-title-name">GAME OVER</div>
+  <div class="ezaz-go-score" id="finalScore"></div>
+  <p class="ezaz-hint" id="finalWave"></p>
+
+  <div id="nameEntry" style="display:none;">
+    <span class="ezaz-label">Your name</span>
+    <input class="ezaz-lb-name-input" id="nameInput" maxlength="12" placeholder="NAME"
+           autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false">
+    <button class="ezaz-btn-save" id="saveBtn">SAVE</button>
   </div>
+
+  <div class="ezaz-lb-wrap" id="overLb"></div>
+
+  <button class="ezaz-btn-primary" id="againBtn">PLAY AGAIN</button>
+  <a href="/" class="ezaz-btn-outline">BACK TO STORE</a>
 </div>
 
-<div class="overlay hidden" id="gameOverScreen">
-  <h1 style="font-size:2.8rem; color:#ff6ec7; margin-bottom:0.15em;">💨 TOO MANY ESCAPED!</h1>
-  <div class="subtitle">GAME OVER</div>
-  <div class="by">by Lil &nbsp;·&nbsp; ez-az.net</div>
-  <div id="finalScore" style="color:#ff6ec7;font-size:2.4rem;font-weight:bold;margin-bottom:0.2em;letter-spacing:0.12em;text-shadow:0 0 16px #ff6ec7;"></div>
-  <div id="finalWave"  style="color:#aa88cc;font-size:1rem;margin-bottom:0.3em;letter-spacing:0.15em;"></div>
-  <div id="bestScore"  style="color:#555;font-size:0.85rem;margin-bottom:2em;letter-spacing:0.1em;"></div>
-  <button class="big-btn" id="restartBtn">▶ &nbsp;PLAY AGAIN</button>
-</div>
+<canvas id="game" width="700" height="800"></canvas>
 
-<canvas id="gameCanvas" width="700" height="800"></canvas>
-
+<script src="/arcade-shell.js"></script>
 <script>
-// ═══════════════════════════════════════
-//  SETUP
-// ═══════════════════════════════════════
-const canvas = document.getElementById('gameCanvas');
-const ctx    = canvas.getContext('2d');
-const W = 700, H = 800;
+(function () {
+  'use strict';
+
+  // Must match the slug registered in app/models/score.rb.
+  var GAME = 'balloon-pop';
+
+  var titleScreen = document.getElementById('titleScreen');
+  var overScreen  = document.getElementById('overScreen');
+  var board       = null;   // last leaderboard we fetched
+  var running     = false;
+  var ended       = false;  // guards gameOver() against running twice
+  var rafId       = 0;
+  var score       = 0;
+
+  ArcadeShell.banner();
+
+  // Escape pauses, but only while actually playing.
+  ArcadeShell.pause({
+    enabled:  function () { return running; },
+    onPause:  function () { running = false; stopMusic(); clearKeys(); },
+    onResume: function () {
+      running = true;
+      lastTime = performance.now();
+      startMusic();
+      cancelAnimationFrame(rafId);
+      loop();
+    }
+  });
+
+  // Show the board on the title screen, and keep it for `qualifies` later.
+  ArcadeShell.leaderboard('#titleLb', GAME).then(function (data) { board = data; });
+
+  document.getElementById('startBtn').addEventListener('click', start);
+  document.getElementById('againBtn').addEventListener('click', start);
+
+  document.getElementById('saveBtn').addEventListener('click', function () {
+    var name = document.getElementById('nameInput').value.trim();
+    if (!name) { return; }
+    ArcadeShell.submit(GAME, name, score).then(function (data) {
+      board = data;
+      document.getElementById('nameEntry').style.display = 'none';
+      ArcadeShell.renderLeaderboard('#overLb', data, { highlight: name.toUpperCase() });
+    });
+  });
+
+  function start() {
+    resetGame();
+    titleScreen.classList.add('hidden');
+    overScreen.classList.add('hidden');
+    running = true;
+    lastTime = performance.now();
+    stopMusic();
+    startMusic();
+    cancelAnimationFrame(rafId);
+    loop();
+  }
+
+  function gameOver() {
+    if (ended) { return; }
+    ended = true;
+    running = false;
+    stopMusic();
+    document.getElementById('finalScore').textContent = ArcadeShell.format(score, board && board.sort);
+    document.getElementById('finalWave').textContent  = 'You reached wave ' + wave;
+    document.getElementById('nameEntry').style.display =
+      ArcadeShell.qualifies(score, board) ? '' : 'none';
+    ArcadeShell.renderLeaderboard('#overLb', board);
+    overScreen.classList.remove('hidden');
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // SECTION 2 of 3 — the game itself.
+  // Calls gameOver() when the player runs out of lives.
+  // ───────────────────────────────────────────────────────────────────────
+  var canvas = document.getElementById('game');
+  var ctx    = canvas.getContext('2d');
+  var W = 700, H = 800;
+
 
 // ═══════════════════════════════════════
 //  CONSTANTS
@@ -145,7 +185,7 @@ const MULTIPIN_GAP = 60;
 // ═══════════════════════════════════════
 //  STATE
 // ═══════════════════════════════════════
-const keys = {};
+var keys = {};
 
 const pin = {
   x: W / 2,
@@ -155,10 +195,8 @@ const pin = {
 };
 
 let balloons     = [];
-let running      = false;
 let lastTime     = 0;
 let spawnTimer   = 1.0;
-let score        = 0;
 let lives        = MAX_LIVES;
 let wave         = 1;
 let popsThisWave = 0;
@@ -174,6 +212,33 @@ let combo        = 0;    // consecutive pops without missing
 let comboTimer   = 0;    // resets combo if no pop in time
 let comboDisplay = null; // { val, x, y, timer } – floating combo text
 let bgHue        = 260;  // animated background hue (shifts with wave)
+
+function clearKeys() { keys = {}; }
+
+function resetGame() {
+  ended         = false;
+  balloons      = [];
+  particles     = [];
+  screenShake   = 0;
+  combo         = 0;
+  comboTimer    = 0;
+  comboDisplay  = null;
+  bgHue         = 260;
+  spawnTimer    = 1.0;
+  score         = 0;
+  lives         = MAX_LIVES;
+  wave          = 1;
+  popsThisWave  = 0;
+  freezeTimer   = 0;
+  speedTimer    = 0;
+  multipinTimer = 0;
+  extraPins     = [];
+  puBanner      = null;
+  pin.x = W / 2; pin.y = PIN_REST_Y;
+  pin.dropping = false; pin.returning = false;
+  music.tempo   = 138;
+  clearKeys();
+}
 
 // ═══════════════════════════════════════
 //  AUDIO  (Web Audio API — all procedural)
@@ -475,26 +540,6 @@ function stopMusic() {
 function updateMusicTempo() {
   music.tempo = Math.min(200, 138 + (wave - 1) * 5);
 }
-
-// ═══════════════════════════════════════
-//  INPUT
-// ═══════════════════════════════════════
-window.addEventListener('keydown', e => {
-  if (['ArrowLeft','ArrowRight','ArrowDown'].includes(e.key)) e.preventDefault();
-  if (!keys[e.key]) {
-    keys[e.key] = true;
-    if (e.key === 'ArrowDown' && running && !pin.dropping && !pin.returning) {
-      pin.dropping = true;
-      soundFire();
-      // fire all extra pins simultaneously
-      for (const ep of extraPins) {
-        if (!ep.dropping && !ep.returning) ep.dropping = true;
-      }
-    }
-  }
-});
-window.addEventListener('keyup', e => { keys[e.key] = false; });
-
 // ═══════════════════════════════════════
 //  BALLOON FACTORY
 // ═══════════════════════════════════════
@@ -545,7 +590,6 @@ function makeBalloon() {
     popTimer: 0,
   };
 }
-
 // ═══════════════════════════════════════
 //  UPDATE
 // ═══════════════════════════════════════
@@ -685,11 +729,10 @@ function update(dt) {
       soundEscape();
       screenShake = 0.25;
       combo = 0; comboTimer = 0;
-      if (lives <= 0) { lives = 0; running = false; soundGameOver(); showGameOver(); }
+      if (lives <= 0) { lives = 0; soundGameOver(); gameOver(); }
     }
   }
 }
-
 // ── called when a power-up balloon is popped ──
 function activatePowerUp(type) {
   soundPowerUp(type);
@@ -711,7 +754,6 @@ function activatePowerUp(type) {
     puBanner = { text: '📌  MULTI-PIN!  4 pins for 10s', colour: '#cc88ff', timer: 2.5 };
   }
 }
-
 // ═══════════════════════════════════════
 //  COLOUR HELPERS
 // ═══════════════════════════════════════
@@ -1231,89 +1273,39 @@ function draw() {
 // ═══════════════════════════════════════
 //  LOOP
 // ═══════════════════════════════════════
-function loop(timestamp) {
-  if (!running) return;
-  const dt = Math.min((timestamp - lastTime)/1000, 0.05);
-  lastTime = timestamp;
+function loop() {
+  if (!running) { return; }
+  var now = performance.now();
+  var dt  = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
   update(dt);
   draw();
-  requestAnimationFrame(loop);
+  if (running) { rafId = requestAnimationFrame(loop); }
 }
 
-let bestScore = 0;
-
-function showGameOver() {
-  stopMusic();
-  if (score > bestScore) bestScore = score;
-  document.getElementById('finalScore').textContent = 'SCORE: ' + score;
-  document.getElementById('finalWave').textContent  = 'YOU REACHED WAVE ' + wave;
-  document.getElementById('bestScore').textContent  = score >= bestScore ? '🏆 NEW BEST!' : 'BEST: ' + bestScore;
-  document.getElementById('gameOverScreen').classList.remove('hidden');
-}
-
-function startGame() {
-  document.getElementById('startScreen').classList.add('hidden');
-  document.getElementById('gameOverScreen').classList.add('hidden');
-  balloons = [];
-  particles    = [];
-  screenShake  = 0;
-  combo        = 0;
-  comboTimer   = 0;
-  comboDisplay = null;
-  bgHue        = 260;
-  spawnTimer   = 1.0;
-  score        = 0;
-  lives        = MAX_LIVES;
-  wave         = 1;
-  popsThisWave = 0;
-  freezeTimer   = 0;
-  speedTimer    = 0;
-  multipinTimer = 0;
-  extraPins     = [];
-  puBanner      = null;
-  pin.x = W/2; pin.y = PIN_REST_Y;
-  pin.dropping = false; pin.returning = false;
-  running  = true;
-  lastTime = performance.now();
-  music.tempo = 138;
-  stopMusic();
-  startMusic();
-  requestAnimationFrame(loop);
-}
-
-document.getElementById('startBtn').addEventListener('click', startGame);
-document.getElementById('restartBtn').addEventListener('click', startGame);
-
-// static preview while on start screen — animated balloons drift up
-const previewBalloons = Array.from({length: 6}, (_, i) => ({
-  x: 80 + i * 110,
-  y: H - 100 - i * 60,
-  baseX: 80 + i * 110,
-  r: 28 + (i % 3) * 8,
-  colour: COLOURS[i % COLOURS.length],
-  wobble: i * 1.1,
-  wobbleSpeed: 0.8 + i * 0.1,
-  wobbleAmp: 14,
-  popping: false,
-  popTimer: 0,
-  powerUp: null,
-}));
-
-function animateStartScreen(timestamp) {
-  if (running) return;
-  const dt = 0.016;
-  for (const b of previewBalloons) {
-    b.wobble += b.wobbleSpeed * dt;
-    b.y -= 28 * dt;
-    b.x  = b.baseX + Math.sin(b.wobble) * b.wobbleAmp;
-    if (b.y + b.r < 0) b.y = H + b.r;
+// ───────────────────────────────────────────────────────────────────────
+// SECTION 3 of 3 — input handling.
+// ───────────────────────────────────────────────────────────────────────
+document.addEventListener('keydown', function (e) {
+  if (!running) { return; }
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+    e.preventDefault();
   }
-  drawBackground();
-  for (const b of previewBalloons) drawBalloon(b);
-  drawHUD();
-  requestAnimationFrame(animateStartScreen);
-}
-requestAnimationFrame(animateStartScreen);
+  if (!keys[e.key]) {
+    keys[e.key] = true;
+    if (e.key === 'ArrowDown' && !pin.dropping && !pin.returning) {
+      pin.dropping = true;
+      soundFire();
+      // fire all extra pins simultaneously
+      for (const ep of extraPins) {
+        if (!ep.dropping && !ep.returning) ep.dropping = true;
+      }
+    }
+  }
+});
+document.addEventListener('keyup', function (e) { keys[e.key] = false; });
+})();
 </script>
+
 </body>
 </html>
